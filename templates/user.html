@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lego Classifier — Пользователь</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/css/app.css" rel="stylesheet">
+</head>
+<body data-role="user">
+    <header class="app-topbar">
+        <button class="sidebar-toggle" id="sidebarToggle" aria-label="Меню"><i class="fas fa-bars"></i></button>
+        <a class="brand" href="/user"><i class="fas fa-cubes"></i> Lego Classifier</a>
+        <div class="search-wrap">
+            <i class="fas fa-search"></i>
+            <input type="search" id="globalSearch" placeholder="Поиск наборов по названию или каталогу..." aria-label="Поиск">
+        </div>
+        <div class="topbar-actions">
+            <span class="role-badge"><i class="fas fa-user"></i> Пользователь</span>
+            <a href="/admin" class="btn-role-switch"><i class="fas fa-user-shield"></i> Режим администратора</a>
+        </div>
+    </header>
+
+    <nav class="app-sidebar" id="appSidebar">
+        <div class="nav-section-title">Навигация</div>
+        <a class="nav-link active" href="#" data-page="home" onclick="navigateUser(event, loadHome)"><i class="fas fa-home"></i> Главная</a>
+        <a class="nav-link" href="#" data-page="classifier" onclick="navigateUser(event, loadClassifier)"><i class="fas fa-tree"></i> Классификатор</a>
+        <div class="nav-section-title">Каталог</div>
+        <a class="nav-link" href="#" data-page="sets" onclick="navigateUser(event, loadSets)"><i class="fas fa-cubes"></i> Наборы</a>
+        <a class="nav-link" href="#" data-page="parts" onclick="navigateUser(event, loadParts)"><i class="fas fa-microchip"></i> Детали</a>
+        <a class="nav-link" href="#" data-page="minifigures" onclick="navigateUser(event, loadMinifigures)"><i class="fas fa-user-astronaut"></i> Мини-фигурки</a>
+        <a class="nav-link" href="#" data-page="products" onclick="navigateUser(event, loadProductsFilter)"><i class="fas fa-box"></i> Изделия</a>
+        <div class="nav-section-title">Документы</div>
+        <a class="nav-link" href="#" data-page="operations" onclick="navigateUser(event, loadOperationsView)"><i class="fas fa-file-invoice"></i> Операции</a>
+    </nav>
+
+    <main class="app-main">
+        <div id="content"></div>
+    </main>
+
+    <footer class="app-footer">
+        СПбГЭТУ «ЛЭТИ» · Справочник LEGO · Режим пользователя · <a href="/">Выбор роли</a>
+    </footer>
+
+    <div id="toastContainer" class="toast-container"></div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="/static/js/common.js"></script>
+    <script src="/static/js/user.js"></script>
+</body>
+</html>

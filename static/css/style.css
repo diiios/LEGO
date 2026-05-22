@@ -1,0 +1,87 @@
+.tree-container {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    padding: 20px;
+}
+
+.tree-node {
+    padding: 8px 5px;
+    margin: 2px 0;
+    border-radius: 4px;
+    transition: background-color 0.2s;
+    cursor: pointer;
+}
+
+.tree-node:hover {
+    background-color: #f0f0f0;
+}
+
+.tree-toggle {
+    cursor: pointer;
+    display: inline-block;
+    width: 20px;
+    font-size: 12px;
+    color: #666;
+    user-select: none;
+}
+
+.tree-icon {
+    margin-right: 8px;
+    font-size: 16px;
+}
+
+.tree-name {
+    font-weight: 500;
+    margin-right: 8px;
+}
+
+.tree-type {
+    font-size: 11px;
+    color: #999;
+    font-style: italic;
+}
+
+.tree-actions {
+    display: inline-block;
+    margin-left: 10px;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.tree-node:hover .tree-actions {
+    opacity: 1;
+}
+
+.tree-actions button {
+    margin: 0 2px;
+    padding: 2px 6px;
+    font-size: 12px;
+}
+
+.tree-children {
+    margin-left: 20px;
+}
+
+.tree-products {
+    margin: 5px 0 10px 0;
+    padding: 8px;
+    background-color: #f9f9f9;
+    border-left: 3px solid #ff9800;
+    border-radius: 4px;
+}
+
+.tree-product {
+    padding: 4px 8px;
+    margin: 2px 0;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+.tree-product:hover {
+    background-color: #e3f2fd;
+}
+
+.product-type {
+    font-size: 11px;
+    color: #ff9800;
+    margin-left: 8px;
+}
