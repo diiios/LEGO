@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from typing import List, Optional, Dict, Any
 
 from config import config
-from models import Base, Classificator, Theme, AgeCategory, PartType, Set, Part, Minifigure, ParameterClass, Parameter, HOOperation
+from models import Base, Classificator, Theme, AgeCategory, PartType, Set, Part, Minifigure, Product, ParameterClass, Parameter, HOOperation
 from schemas import *
 from lego_classifier import LegoClassifier
 
@@ -224,6 +224,21 @@ def get_all_parts(db: Session = Depends(get_db)):
     """Получить все детали"""
     return classifier.get_all_parts(db)
 
+@app.post("/parts/filter", tags=["🔧 Детали"], response_model=List[Dict[str, Any]])
+def filter_parts(data: PartFilter, db: Session = Depends(get_db)):
+    """Фильтр деталей по типу, цвету и названию"""
+    return classifier.filter_parts(
+        db,
+        part_type_id=data.part_type_id,
+        color=data.color,
+        name_contains=data.name_contains,
+    )
+
+@app.post("/parts/cleanup-anomalies", tags=["🔧 Детали"], response_model=Dict[str, Any])
+def cleanup_anomalous_parts(db: Session = Depends(get_db)):
+    """Удалить детали с нереалистичными данными (например, вес > 500 г)"""
+    return classifier.remove_anomalous_parts(db)
+
 @app.post("/parts", tags=["🔧 Детали"], response_model=OperationResult)
 def create_part(data: PartCreate, db: Session = Depends(get_db)):
     """Создать деталь"""
@@ -231,6 +246,34 @@ def create_part(data: PartCreate, db: Session = Depends(get_db)):
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+@app.get("/parts/{part_id}", tags=["🔧 Детали"])
+def get_part(part_id: int, db: Session = Depends(get_db)):
+    """Получить деталь по ID"""
+    part = classifier._parts_query(db).filter(Part.id == part_id).first()
+    if not part:
+        raise HTTPException(status_code=404, detail="Деталь не найдена")
+    return classifier._serialize_part(part)
+
+@app.put("/parts/{part_id}", tags=["🔧 Детали"], response_model=OperationResult)
+def update_part(part_id: int, data: PartCreate, db: Session = Depends(get_db)):
+    """Обновить деталь"""
+    part = db.query(Part).filter(Part.id == part_id).first()
+    if not part:
+        raise HTTPException(status_code=404, detail="Деталь не найдена")
+    if data.weight < 0 or data.weight > 500:
+        raise HTTPException(status_code=400, detail="Вес детали должен быть от 0 до 500 г")
+    try:
+        part.classificator.название = data.name
+        part.цвет = data.color
+        part.размер = data.size
+        part.вес = data.weight
+        part.id_типа = data.part_type_id
+        db.commit()
+        return {"success": True, "message": "Деталь обновлена"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ==================== MINIFIGURES ====================
 
@@ -246,6 +289,37 @@ def create_minifigure(data: MinifigureCreate, db: Session = Depends(get_db)):
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
+
+@app.get("/minifigures/{mf_id}", tags=["🧸 Мини-фигурки"])
+def get_minifigure(mf_id: int, db: Session = Depends(get_db)):
+    """Получить мини-фигурку по ID"""
+    mf = db.query(Minifigure).filter(Minifigure.id == mf_id).first()
+    if not mf:
+        raise HTTPException(status_code=404, detail="Мини-фигурка не найдена")
+    return {
+        "id": mf.id,
+        "name": mf.classificator.название,
+        "character": mf.персонаж,
+        "series": mf.серия,
+        "unique_code": mf.уникальный_код,
+    }
+
+@app.put("/minifigures/{mf_id}", tags=["🧸 Мини-фигурки"], response_model=OperationResult)
+def update_minifigure(mf_id: int, data: MinifigureCreate, db: Session = Depends(get_db)):
+    """Обновить мини-фигурку"""
+    mf = db.query(Minifigure).filter(Minifigure.id == mf_id).first()
+    if not mf:
+        raise HTTPException(status_code=404, detail="Мини-фигурка не найдена")
+    try:
+        mf.classificator.название = data.name
+        mf.персонаж = data.character
+        mf.серия = data.series
+        mf.уникальный_код = data.unique_code
+        db.commit()
+        return {"success": True, "message": "Мини-фигурка обновлена"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ==================== DIRECTORIES ====================
 
@@ -507,6 +581,37 @@ def create_product(data: ProductCreate, db: Session = Depends(get_db)):
 def get_products(db: Session = Depends(get_db)):
     """Получить все изделия"""
     return classifier.get_all_products(db)
+
+@app.get("/products/{product_id}", tags=["🏷️ Изделия"])
+def get_product(product_id: int, db: Session = Depends(get_db)):
+    """Получить изделие по ID"""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Изделие не найдено")
+    class_name = product.class_node.название if product.class_node else None
+    return {
+        "id": product.id,
+        "наименование": product.наименование,
+        "артикул": product.артикул,
+        "класс_id": product.класс_id,
+        "класс_название": class_name,
+    }
+
+@app.put("/products/{product_id}", tags=["🏷️ Изделия"], response_model=OperationResult)
+def update_product(product_id: int, data: ProductCreate, db: Session = Depends(get_db)):
+    """Обновить изделие"""
+    product = db.query(Product).filter(Product.id == product_id).first()
+    if not product:
+        raise HTTPException(status_code=404, detail="Изделие не найдено")
+    try:
+        product.наименование = data.наименование
+        product.артикул = data.артикул
+        product.класс_id = data.класс_id
+        db.commit()
+        return {"success": True, "message": "Изделие обновлено"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/products/{product_id}/values", tags=["🏷️ Изделия"], response_model=List[Dict[str, Any]])
 def get_product_values(product_id: int, db: Session = Depends(get_db)):

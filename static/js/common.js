@@ -187,3 +187,26 @@ function toggleTreeBranch(el) {
         el.textContent = hidden ? '▼' : '▶';
     }
 }
+
+/** Пояснение разницы «Деталь» (1.1) и «Изделие» (1.3) для интерфейса пользователя */
+function entityInfoHtml(kind) {
+    if (kind === 'part') {
+        return `<div class="entity-info entity-info-part" role="note">
+            <strong><i class="fas fa-microchip"></i> Деталь</strong> — конструктивный элемент LEGO для наборов (работы 1.1–1.2).
+            Жёсткие поля: тип, цвет, размер, вес. Входит в <em>состав набора</em>, не продаётся отдельно на складе.
+            <span class="entity-info-hint">Пример: «Кирпич 2×4 красный».</span>
+        </div>`;
+    }
+    if (kind === 'product') {
+        return `<div class="entity-info entity-info-product" role="note">
+            <strong><i class="fas fa-box"></i> Изделие</strong> — товар на складе с артикулом (работа 1.3).
+            Гибкие <em>параметры</em> из справочника (вес, цвет, материал…), привязка к классу изделия.
+            Используется в <em>хозяйственных операциях</em>. Параметры здесь — не поля детали.
+            <span class="entity-info-hint">Пример: «Кирпич красный», артикул BR001, параметр «вес» = 2.5.</span>
+        </div>`;
+    }
+    return `<div class="entity-info entity-info-compare" role="note">
+        <p><strong>Деталь</strong> — элемент для сборки наборов. <strong>Изделие</strong> — товар для учёта и продажи с настраиваемыми параметрами.</p>
+        <p class="mb-0 small text-muted">Ищете деталь для каталога конструктора → раздел «Детали». Подбор товара по характеристикам → «Изделия».</p>
+    </div>`;
+}

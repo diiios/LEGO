@@ -74,9 +74,16 @@ class PartResponse(BaseModel):
     size: str
     weight: float
     part_type_id: int
+    type_name: Optional[str] = None
     
     class Config:
         from_attributes = True
+
+class PartFilter(BaseModel):
+    """Фильтр деталей по жёстким полям (без параметров изделия)."""
+    part_type_id: Optional[int] = None
+    color: Optional[str] = None
+    name_contains: Optional[str] = None
 
 # Minifigure schemas
 class MinifigureCreate(BaseModel):

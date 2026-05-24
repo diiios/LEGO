@@ -1,6 +1,6 @@
 # lego_classifier.py
 from sqlalchemy import func, text
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 
@@ -227,8 +227,31 @@ class LegoClassifier:
             db.rollback()
             return {"success": False, "message": f"Ошибка: {str(e)}", "product_id": None}
     
+    def _serialize_part(self, part: Part) -> Dict[str, Any]:
+        """Словарь детали с названием типа (не только id)."""
+        type_name = None
+        if part.part_type and part.part_type.classificator:
+            type_name = part.part_type.classificator.название
+        return {
+            "id": part.id,
+            "name": part.classificator.название if part.classificator else "",
+            "color": part.цвет,
+            "size": part.размер,
+            "weight": part.вес,
+            "part_type_id": part.id_типа,
+            "type_name": type_name,
+        }
+
+    def _parts_query(self, db: Session):
+        return db.query(Part).options(
+            joinedload(Part.classificator),
+            joinedload(Part.part_type).joinedload(PartType.classificator),
+        )
+
     def add_part(self, db: Session, name: str, color: str, size: str, weight: float, part_type_id: int) -> Dict[str, Any]:
         """Добавление детали"""
+        if weight is None or weight < 0 or weight > 500:
+            return {"success": False, "message": "Вес детали должен быть от 0 до 500 г"}
         node_result = self.add_node(db, name, "терминальный", None)
         if not node_result["success"]:
             return node_result
@@ -359,15 +382,49 @@ class LegoClassifier:
     
     def get_all_parts(self, db: Session) -> List[Dict[str, Any]]:
         """Получение всех деталей"""
-        parts = db.query(Part).join(Classificator, Classificator.id == Part.id_классификатора).all()
-        return [{
-            "id": p.id,
-            "name": p.classificator.название,
-            "color": p.цвет,
-            "size": p.размер,
-            "weight": p.вес,
-            "part_type_id": p.id_типа
-        } for p in parts]
+        parts = self._parts_query(db).all()
+        return [self._serialize_part(p) for p in parts]
+
+    def filter_parts(
+        self,
+        db: Session,
+        part_type_id: Optional[int] = None,
+        color: Optional[str] = None,
+        name_contains: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """Фильтр деталей по жёстким полям (тип, цвет, название)."""
+        q = self._parts_query(db)
+        if part_type_id is not None:
+            q = q.filter(Part.id_типа == part_type_id)
+        if color:
+            q = q.filter(Part.цвет == color)
+        q = q.join(Classificator, Classificator.id == Part.id_классификатора)
+        if name_contains:
+            q = q.filter(Classificator.название.ilike(f"%{name_contains.strip()}%"))
+        parts = q.order_by(Classificator.название).all()
+        return [self._serialize_part(p) for p in parts]
+
+    def remove_anomalous_parts(self, db: Session) -> Dict[str, Any]:
+        """Удаление ошибочных деталей (нереалистичный вес и т.п.)."""
+        from models import SetPart
+        anomalies = db.query(Part).filter(Part.вес > 500).all()
+        removed = []
+        for part in anomalies:
+            name = part.classificator.название if part.classificator else f"id={part.id}"
+            db.query(SetPart).filter(SetPart.id_детали == part.id).delete(synchronize_session=False)
+            cls = part.classificator
+            db.delete(part)
+            if cls:
+                db.delete(cls)
+            removed.append(name)
+        if removed:
+            db.commit()
+        return {
+            "success": True,
+            "removed_count": len(removed),
+            "removed_names": removed,
+            "message": f"Удалено ошибочных деталей: {len(removed)}" if removed else "Ошибочных деталей не найдено",
+        }
     
     def get_all_minifigures(self, db: Session) -> List[Dict[str, Any]]:
         """Получение всех мини-фигурок"""
@@ -1802,52 +1859,69 @@ class LegoClassifier:
             {"operator": "between", "min": 100, "max": 200}
         ]
         """
-        query = db.query(Product)
-        
         # Фильтрация по классам (включая потомков)
+        all_class_ids = None
         if class_ids:
             all_class_ids = set(class_ids)
             for cid in class_ids:
                 descendants = self.get_descendants(db, cid)
                 all_class_ids.update([d["id"] for d in descendants])
-            query = query.filter(Product.класс_id.in_(all_class_ids))
-        
-        # Применяем фильтры по параметрам
-        for pf in param_filters:
+
+        matching_ids = None
+
+        def _apply_param_filter(pf: Dict) -> set:
             param = db.query(Parameter).filter(Parameter.обозначение == pf.get("param_code")).first()
             if not param:
-                continue
-            
-            # Получаем ParameterClass для всех нужных классов
-            param_class_subq = db.query(ParameterClass.id).filter(
-                ParameterClass.параметр_id == param.id
-            ).subquery()
-            
-            if pf.get("operator") == "=":
-                query = query.join(ParameterValue, ParameterValue.изделие_id == Product.id)\
-                             .filter(ParameterValue.параметр_класса_id.in_(param_class_subq))
+                return set()
+
+            param_class_ids = [
+                row[0] for row in db.query(ParameterClass.id).filter(
+                    ParameterClass.параметр_id == param.id
+                ).all()
+            ]
+            if not param_class_ids:
+                return set()
+
+            q = db.query(Product.id).join(
+                ParameterValue, ParameterValue.изделие_id == Product.id
+            ).filter(ParameterValue.параметр_класса_id.in_(param_class_ids))
+
+            if all_class_ids is not None:
+                q = q.filter(Product.класс_id.in_(all_class_ids))
+
+            op = pf.get("operator")
+            if op == "=":
                 if param.тип_параметра in ('REAL', 'INTEGER'):
-                    query = query.filter(ParameterValue.значение_число == pf["value"])
+                    q = q.filter(ParameterValue.значение_число == pf["value"])
                 elif param.тип_параметра == 'STRING':
-                    query = query.filter(ParameterValue.значение_строка == pf["value"])
+                    q = q.filter(ParameterValue.значение_строка == pf["value"])
                 elif param.тип_параметра == 'ENUM':
-                    query = query.filter(ParameterValue.значение_перечисление_id == pf["value"])
-            
-            elif pf.get("operator") == ">":
-                query = query.join(ParameterValue, ParameterValue.изделие_id == Product.id)\
-                             .filter(ParameterValue.параметр_класса_id.in_(param_class_subq))\
-                             .filter(ParameterValue.значение_число > pf["value"])
-            
-            elif pf.get("operator") == "<":
-                query = query.join(ParameterValue, ParameterValue.изделие_id == Product.id)\
-                             .filter(ParameterValue.параметр_класса_id.in_(param_class_subq))\
-                             .filter(ParameterValue.значение_число < pf["value"])
-            
-            elif pf.get("operator") == "between":
-                query = query.join(ParameterValue, ParameterValue.изделие_id == Product.id)\
-                             .filter(ParameterValue.параметр_класса_id.in_(param_class_subq))\
-                             .filter(ParameterValue.значение_число.between(pf["min"], pf["max"]))
-        
+                    q = q.filter(ParameterValue.значение_перечисление_id == pf["value"])
+            elif op == ">":
+                q = q.filter(ParameterValue.значение_число > pf["value"])
+            elif op == "<":
+                q = q.filter(ParameterValue.значение_число < pf["value"])
+            elif op == "between":
+                q = q.filter(ParameterValue.значение_число.between(pf["min"], pf["max"]))
+
+            return {row[0] for row in q.distinct().all()}
+
+        for pf in (param_filters or []):
+            ids = _apply_param_filter(pf)
+            if matching_ids is None:
+                matching_ids = ids
+            else:
+                matching_ids &= ids
+
+        if matching_ids is not None:
+            if not matching_ids:
+                return []
+            query = db.query(Product).filter(Product.id.in_(matching_ids))
+        else:
+            query = db.query(Product)
+            if all_class_ids is not None:
+                query = query.filter(Product.класс_id.in_(all_class_ids))
+
         products = query.all()
         return [{"id": p.id, "наименование": p.наименование, "артикул": p.артикул} for p in products]
     
