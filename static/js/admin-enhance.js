@@ -147,6 +147,50 @@ function validateHOTypeForm(p, excludeId = null) {
     return runValidation(rules);
 }
 
+function showAdminDynamicModal(title, bodyHtml, footerHtml = '') {
+    const modal = document.createElement('div');
+    modal.className = 'modal fade modal-app';
+    modal.innerHTML = `<div class="modal-dialog modal-xl"><div class="modal-content">
+        <div class="modal-header"><h5 class="modal-title">${escapeHtml(title)}</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+        <div class="modal-body">${bodyHtml}</div>
+        <div class="modal-footer">${footerHtml}<button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Закрыть</button></div>
+    </div></div>`;
+    document.body.appendChild(modal);
+    modal.addEventListener('hidden.bs.modal', () => modal.remove());
+    bootstrap.Modal.getOrCreateInstance(modal).show();
+    return modal;
+}
+
+async function buildParamValueControl(param, fieldId, value = '') {
+    const type = param.тип_параметра || param.тип;
+    const enumId = param.перечисление_id;
+    if (type === 'ENUM' && enumId) {
+        const values = await apiRequest(`/enumerations/${enumId}/values`);
+        let opts = '<option value="">— выберите —</option>';
+        for (const v of values) {
+            opts += `<option value="${v.id}"${String(value) === String(v.id) ? ' selected' : ''}>${escapeHtml(v.value)}</option>`;
+        }
+        return `<select class="form-select" id="${fieldId}">${opts}</select>`;
+    }
+    if (type === 'REAL' || type === 'INTEGER') {
+        return `<input type="number" class="form-control" id="${fieldId}" step="${type === 'INTEGER' ? '1' : 'any'}" value="${escapeHtml(value ?? '')}">`;
+    }
+    if (type === 'DATETIME') {
+        const dt = value ? String(value).replace(' ', 'T').slice(0, 16) : '';
+        return `<input type="datetime-local" class="form-control" id="${fieldId}" value="${escapeHtml(dt)}">`;
+    }
+    return `<input type="text" class="form-control" id="${fieldId}" value="${escapeHtml(value ?? '')}">`;
+}
+
+function normalizeAdminValueByType(fieldId, type) {
+    const raw = getVal(fieldId);
+    if (raw === '') return null;
+    if (type === 'INTEGER' || type === 'ENUM') return parseInt(raw, 10);
+    if (type === 'REAL') return parseFloat(raw);
+    if (type === 'DATETIME') return new Date(raw).toISOString();
+    return raw;
+}
+
 // Переопределение show*Modal
 const _showCreateCategoryModal = typeof showCreateCategoryModal === 'function' ? showCreateCategoryModal : null;
 async function showCreateCategoryModal() {
@@ -189,6 +233,14 @@ async function showCreateProductModal() {
     document.getElementById('productName').value = '';
     document.getElementById('productArticle').value = '';
     document.getElementById('productClassId').value = '';
+    const sel = document.getElementById('productClassId');
+    if (sel) {
+        sel.onchange = () => {
+            const cid = parseInt(getVal('productClassId'), 10) || null;
+            renderProductParamsForm('productParamsCreateArea', cid, null);
+        };
+    }
+    await renderProductParamsForm('productParamsCreateArea', null, null);
     openModal('createProductModal');
 }
 
@@ -271,6 +323,15 @@ async function showEditProductModal(id) {
         document.getElementById('editProductName').value = p.наименование;
         document.getElementById('editProductArticle').value = p.артикул || '';
         document.getElementById('editProductClassId').value = p.класс_id;
+        const sel = document.getElementById('editProductClassId');
+        if (sel) {
+            sel.onchange = () => {
+                const cid = parseInt(getVal('editProductClassId'), 10) || null;
+                const pid = parseInt(document.getElementById('editProductId').value, 10);
+                renderProductParamsForm('productParamsEditArea', cid, pid);
+            };
+        }
+        await renderProductParamsForm('productParamsEditArea', p.класс_id, p.id);
         openModal('editProductModal');
     } catch (e) { showToast(e.message, 'error'); }
 }
@@ -472,22 +533,32 @@ async function updateParameter() {
 
 async function createProduct() {
     if (!validateProductForm('product')) return;
+    if (!validateProductParamsForm('productParamsCreateArea')) return;
     const data = {
         класс_id: parseInt(getVal('productClassId'), 10),
         наименование: getVal('productName'),
         артикул: getVal('productArticle') || null,
     };
     try {
-        await apiRequest('/products', 'POST', data);
-        showToast('Изделие создано');
+        const res = await apiRequest('/products', 'POST', data);
+        const productId = res.product_id;
+        if (!productId) throw new Error('Сервер не вернул ID изделия');
+        const pr = await saveProductParamsFromForm('productParamsCreateArea', productId);
+        if (pr.errors.length) {
+            showToast(`Изделие создано, но есть ошибки параметров: ${pr.errors.join('; ')}`, 'error');
+        } else {
+            showToast(`Изделие создано${pr.saved ? `, параметров: ${pr.saved}` : ''}`, 'success');
+        }
+        invalidateClassParamsCache();
         closeModal('createProductModal');
-        loadProducts();
+        applyAdminProductsFilter();
     } catch (e) { showToast(e.message, 'error'); }
 }
 
 async function updateProduct() {
     if (!validateProductForm('editProduct')) return;
-    const id = document.getElementById('editProductId').value;
+    if (!validateProductParamsForm('productParamsEditArea')) return;
+    const id = parseInt(document.getElementById('editProductId').value, 10);
     const data = {
         класс_id: parseInt(getVal('editProductClassId'), 10),
         наименование: getVal('editProductName'),
@@ -495,9 +566,15 @@ async function updateProduct() {
     };
     try {
         await apiRequest(`/products/${id}`, 'PUT', data);
-        showToast('Изделие обновлено');
+        const pr = await saveProductParamsFromForm('productParamsEditArea', id);
+        if (pr.errors.length) {
+            showToast(`Сохранено с ошибками: ${pr.errors.join('; ')}`, 'error');
+        } else {
+            showToast(`Изделие обновлено${pr.saved || pr.deleted ? ` (параметры: +${pr.saved}, −${pr.deleted})` : ''}`, 'success');
+        }
+        invalidateClassParamsCache();
         closeModal('editProductModal');
-        loadProducts();
+        applyAdminProductsFilter();
     } catch (e) { showToast(e.message, 'error'); }
 }
 
@@ -561,22 +638,209 @@ async function addHORole() {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
-// Таблицы: кнопки редактирования
-const _loadParts = loadParts;
-loadParts = async function() {
-    await _loadParts();
-    const tbody = document.querySelector('#content table tbody');
-    if (!tbody) return;
-    tbody.querySelectorAll('tr').forEach((tr, i) => {
-        const btnCell = tr.querySelector('.action-buttons');
-        if (!btnCell || btnCell.querySelector('.btn-warning')) return;
-        const id = tr.cells[0]?.textContent;
-        if (!id) return;
-        const editBtn = `<button type="button" class="btn btn-sm btn-warning me-1" onclick="showEditPartModal(${id})" title="Изменить"><i class="fas fa-edit"></i></button>`;
-        btnCell.innerHTML = editBtn + btnCell.innerHTML;
-    });
-};
+async function loadClassifierTools() {
+    showLoading();
+    try {
+        await loadCategoriesList();
+        const opts = buildCategorySelectOptions(REF_CACHE.categories, '— выберите узел —');
+        document.getElementById('content').innerHTML = `
+            <div class="card">
+                <div class="card-header"><i class="fas fa-screwdriver-wrench"></i> Сервис классификатора</div>
+                <div class="card-body">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-6"><label class="form-label">Узел</label><select class="form-select" id="toolNodeId">${opts}</select></div>
+                        <div class="col-md-3"><label class="form-label">Базовая ед. изм. (ID)</label><input type="number" class="form-control" id="toolBaseUnit" min="1"></div>
+                        <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" onclick="setClassifierBaseUnit()"><i class="fas fa-save"></i> Установить</button></div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mb-3">
+                        <button class="btn btn-outline-primary" onclick="showCategoryInfo('descendants')"><i class="fas fa-sitemap"></i> Потомки</button>
+                        <button class="btn btn-outline-primary" onclick="showCategoryInfo('ancestors')"><i class="fas fa-level-up-alt"></i> Родители</button>
+                        <button class="btn btn-outline-primary" onclick="showCategoryInfo('terminals')"><i class="fas fa-file"></i> Терминальные</button>
+                        <button class="btn btn-outline-warning" onclick="runCycleDiagnostics()"><i class="fas fa-project-diagram"></i> Циклы</button>
+                        <button class="btn btn-outline-danger" onclick="cleanupPartsAnomalies()"><i class="fas fa-broom"></i> Очистить аномалии деталей</button>
+                    </div>
+                    <div class="border-top pt-3">
+                        <h6>Создать подкатегорию по имени родителя</h6>
+                        <div class="row g-2">
+                            <div class="col-md-5"><input type="text" class="form-control" id="subcatParentName" placeholder="Имя родителя"></div>
+                            <div class="col-md-5"><input type="text" class="form-control" id="subcatChildName" placeholder="Имя новой подкатегории"></div>
+                            <div class="col-md-2"><button class="btn btn-success w-100" onclick="createSubcategoryByParentName()"><i class="fas fa-plus"></i> Создать</button></div>
+                        </div>
+                    </div>
+                    <div class="border-top pt-3 mt-3">
+                        <h6>Изменить порядок потомков</h6>
+                        <div class="row g-2">
+                            <div class="col-md-4"><select class="form-select" id="reorderParentId">${opts}</select></div>
+                            <div class="col-md-6"><input type="text" class="form-control" id="reorderChildIds" placeholder="ID потомков через запятую: 12, 14, 13"></div>
+                            <div class="col-md-2"><button class="btn btn-primary w-100" onclick="reorderCategoryChildren()"><i class="fas fa-sort"></i> Сохранить</button></div>
+                        </div>
+                    </div>
+                    <div id="classifierToolsResult" class="mt-3"></div>
+                </div>
+            </div>`;
+    } catch (e) { showError(e.message); }
+}
 
+async function setClassifierBaseUnit() {
+    const nodeId = getVal('toolNodeId');
+    const baseId = getVal('toolBaseUnit');
+    if (!nodeId || !baseId) return showToast('Выберите узел и укажите ID единицы', 'error');
+    try {
+        await apiRequest(`/categories/${nodeId}/base-unit`, 'PUT', { base_ei_id: parseInt(baseId, 10) });
+        showToast('Базовая единица установлена');
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function showCategoryInfo(kind) {
+    const nodeId = getVal('toolNodeId');
+    if (!nodeId) return showToast('Выберите узел', 'error');
+    const titleMap = { descendants: 'Потомки узла', ancestors: 'Родители узла', terminals: 'Терминальные классы' };
+    try {
+        const rows = await apiRequest(`/categories/${nodeId}/${kind}`);
+        renderClassifierToolRows(titleMap[kind], rows);
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+function renderClassifierToolRows(title, rows) {
+    const box = document.getElementById('classifierToolsResult');
+    if (!box) return;
+    let html = `<h6>${escapeHtml(title)}</h6>`;
+    if (!rows.length) {
+        html += '<div class="alert alert-info small mb-0">Данных нет.</div>';
+    } else {
+        html += '<div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>ID</th><th>Название</th><th>Тип</th><th>Родитель</th><th>Уровень</th></tr></thead><tbody>';
+        for (const r of rows) {
+            html += `<tr><td>${r.id ?? r.node_id}</td><td>${escapeHtml(r.название || r.node_name || '')}</td><td>${escapeHtml(r.тип_элемента || '')}</td><td>${r.родительский_id ?? '—'}</td><td>${r.уровень ?? '—'}</td></tr>`;
+        }
+        html += '</tbody></table></div>';
+    }
+    box.innerHTML = html;
+}
+
+async function runCycleDiagnostics() {
+    try {
+        const rows = await apiRequest('/cycles');
+        const box = document.getElementById('classifierToolsResult');
+        if (!rows.length) {
+            box.innerHTML = '<div class="alert alert-success small mb-0">Циклы не найдены.</div>';
+            return;
+        }
+        let html = '<h6>Найденные циклы</h6><div class="table-responsive"><table class="table table-sm table-bordered"><thead><tr><th>ID</th><th>Узел</th><th>Путь</th></tr></thead><tbody>';
+        for (const r of rows) html += `<tr><td>${r.node_id}</td><td>${escapeHtml(r.node_name)}</td><td>${escapeHtml(r.path)}</td></tr>`;
+        html += '</tbody></table></div>';
+        box.innerHTML = html;
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function cleanupPartsAnomalies() {
+    if (!confirm('Запустить очистку аномалий деталей?')) return;
+    try {
+        const res = await apiRequest('/parts/cleanup-anomalies', 'POST');
+        showToast(`Очистка завершена: удалено ${res.removed_count || 0}`);
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function createSubcategoryByParentName() {
+    const parent = getVal('subcatParentName');
+    const child = getVal('subcatChildName');
+    if (!parent || !child) return showToast('Укажите имя родителя и подкатегории', 'error');
+    try {
+        await apiRequest('/categories/subcategory', 'POST', { parent_name: parent, child_name: child });
+        REF_CACHE.categories = null;
+        showToast('Подкатегория создана');
+        loadClassifierTools();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function reorderCategoryChildren() {
+    const parentId = getVal('reorderParentId');
+    const ids = (getVal('reorderChildIds') || '').split(',').map(x => parseInt(x.trim(), 10)).filter(Boolean);
+    if (!parentId || !ids.length) return showToast('Укажите родителя и список ID потомков', 'error');
+    try {
+        await apiRequest(`/categories/${parentId}/reorder`, 'PUT', { ordered_child_ids: ids });
+        showToast('Порядок потомков сохранён');
+        loadTree();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function loadClassParametersAdmin() {
+    showLoading();
+    try {
+        await Promise.all([loadCategoriesList(), preloadAdminRefs()]);
+        const classOpts = buildCategorySelectOptions(REF_CACHE.categories, '— выберите класс —');
+        document.getElementById('content').innerHTML = `
+            <div class="card">
+                <div class="card-header"><i class="fas fa-link"></i> Параметры классов</div>
+                <div class="card-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-5"><label class="form-label">Класс</label><select class="form-select" id="classParamClass" onchange="loadClassParametersTable()">${classOpts}</select></div>
+                        <div class="col-md-5"><label class="form-label">Параметр</label><select class="form-select" id="classParamParam">${buildSelectOptions(await apiRequest('/parameters'), 'id', 'полное_имя')}</select></div>
+                        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-success w-100" onclick="addParamToClassAdmin()"><i class="fas fa-plus"></i> Привязать</button></div>
+                    </div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-3"><input type="number" class="form-control" id="classParamMin" step="any" placeholder="Мин. значение"></div>
+                        <div class="col-md-3"><input type="number" class="form-control" id="classParamMax" step="any" placeholder="Макс. значение"></div>
+                        <div class="col-md-3"><input type="text" class="form-control" id="classParamDefault" placeholder="По умолчанию"></div>
+                        <div class="col-md-3 d-flex align-items-center"><label class="form-check mb-0"><input type="checkbox" class="form-check-input" id="classParamRequired"> Обязательный</label></div>
+                    </div>
+                    <div class="alert alert-info small">Таблица показывает параметры выбранного класса вместе с унаследованными от родителей.</div>
+                    <div id="classParamsResult"></div>
+                </div>
+            </div>`;
+    } catch (e) { showError(e.message); }
+}
+
+async function loadClassParametersTable() {
+    const classId = getVal('classParamClass');
+    const box = document.getElementById('classParamsResult');
+    if (!box) return;
+    if (!classId) {
+        box.innerHTML = '<div class="empty-state">Выберите класс.</div>';
+        return;
+    }
+    box.innerHTML = '<div class="spinner-border spinner-border-sm"></div>';
+    try {
+        const params = await apiRequest(`/classes/${classId}/parameters`);
+        let html = '<div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Код</th><th>Имя</th><th>Тип</th><th>Ограничения</th><th>Источник</th><th></th></tr></thead><tbody>';
+        for (const p of params) {
+            const own = String(p.класс_источник) === String(classId);
+            html += `<tr><td><code>${escapeHtml(p.обозначение)}</code></td><td>${escapeHtml(p.полное_имя)}</td><td>${escapeHtml(p.тип_параметра)}</td><td>${p.мин_значение ?? '—'} … ${p.макс_значение ?? '—'}${p.обязательный ? ' · обяз.' : ''}</td><td>${own ? 'этот класс' : 'родитель ' + p.класс_источник}</td><td>${own ? `<button class="btn btn-sm btn-outline-danger" onclick="removeParamFromClassAdmin(${p.param_class_id})"><i class="fas fa-unlink"></i></button>` : ''}</td></tr>`;
+        }
+        html += params.length ? '</tbody></table></div>' : '<tr><td colspan="6" class="text-muted text-center">Параметры не привязаны</td></tr></tbody></table></div>';
+        box.innerHTML = html;
+    } catch (e) { box.innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`; }
+}
+
+async function addParamToClassAdmin() {
+    const classId = getVal('classParamClass');
+    const paramId = getVal('classParamParam');
+    if (!classId || !paramId) return showToast('Выберите класс и параметр', 'error');
+    const payload = {
+        параметр_id: parseInt(paramId, 10),
+        мин_значение: getVal('classParamMin') ? parseFloat(getVal('classParamMin')) : null,
+        макс_значение: getVal('classParamMax') ? parseFloat(getVal('classParamMax')) : null,
+        значение_по_умолчанию: getVal('classParamDefault') || null,
+        обязательный: document.getElementById('classParamRequired')?.checked || false,
+    };
+    try {
+        await apiRequest(`/classes/${classId}/parameters`, 'POST', payload);
+        invalidateClassParamsCache();
+        showToast('Параметр привязан к классу');
+        loadClassParametersTable();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function removeParamFromClassAdmin(paramClassId) {
+    if (!confirm('Отвязать параметр от класса?')) return;
+    try {
+        await apiRequest(`/classes/parameters/${paramClassId}`, 'DELETE');
+        invalidateClassParamsCache();
+        showToast('Параметр отвязан');
+        loadClassParametersTable();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+// Таблицы: кнопки редактирования
 const _loadMinifigures = loadMinifigures;
 loadMinifigures = async function() {
     await _loadMinifigures();
@@ -589,16 +853,85 @@ loadMinifigures = async function() {
     });
 };
 
-const _loadProducts = loadProducts;
+let adminProductsFilterClass = '';
+
+async function renderAdminProductsTable(products) {
+    let rows = '';
+    for (const p of products) {
+        rows += `<tr><td>${p.id}</td><td>${escapeHtml(p.наименование)}</td><td><code>${escapeHtml(p.артикул || '—')}</code></td><td>${escapeHtml(p.класс_название || p.класс_id)}</td>
+            <td class="action-buttons">
+            <button type="button" class="btn btn-sm btn-warning me-1" onclick="showEditProductModal(${p.id})" title="Изменить и параметры"><i class="fas fa-edit"></i></button>
+            <button type="button" class="btn btn-sm btn-info me-1" onclick="showProductParams(${p.id})" title="Просмотр параметров"><i class="fas fa-chart-line"></i></button>
+            <button type="button" class="btn btn-sm btn-danger" onclick="deleteProduct(${p.id})"><i class="fas fa-trash"></i></button></td></tr>`;
+    }
+    return rows;
+}
+
+async function applyAdminProductsFilter() {
+    const tbody = document.querySelector('#adminProductsTable tbody');
+    const countEl = document.getElementById('adminProductsCount');
+    if (!tbody) return;
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-3"><div class="spinner-border spinner-border-sm"></div></td></tr>`;
+    try {
+        const classId = getVal('adminProdClassFilter');
+        const text = (getVal('adminProdTextFilter') || '').toLowerCase();
+        adminProductsFilterClass = classId;
+        let products;
+        if (classId) {
+            products = await apiRequest('/products/filter', 'POST', { class_ids: [parseInt(classId, 10)] });
+        } else {
+            products = await apiRequest('/products');
+        }
+        if (text) {
+            products = products.filter(p =>
+                (p.наименование || '').toLowerCase().includes(text)
+                || (p.артикул || '').toLowerCase().includes(text)
+            );
+        }
+        if (!products.length) {
+            tbody.innerHTML = '<tr><td colspan="5" class="text-muted text-center py-3">Изделия не найдены</td></tr>';
+        } else {
+            tbody.innerHTML = await renderAdminProductsTable(products);
+        }
+        if (countEl) {
+            countEl.textContent = classId
+                ? `Показано: ${products.length} (класс и подклассы)`
+                : `Показано: ${products.length} — все классы`;
+        }
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="5" class="text-danger">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
 loadProducts = async function() {
-    await _loadProducts();
-    document.querySelectorAll('#content table tbody tr').forEach(tr => {
-        const btnCell = tr.querySelector('.action-buttons');
-        if (!btnCell || btnCell.querySelector('.btn-warning')) return;
-        const id = tr.cells[0]?.textContent;
-        const editBtn = `<button type="button" class="btn btn-sm btn-warning me-1" onclick="showEditProductModal(${id})" title="Изменить"><i class="fas fa-edit"></i></button>`;
-        btnCell.innerHTML = editBtn + btnCell.innerHTML;
-    });
+    showLoading();
+    try {
+        await loadCategoriesList();
+        const classOpts = buildCategorySelectOptions(REF_CACHE.categories, '— выберите класс —');
+        document.getElementById('content').innerHTML = `
+            <div class="card">
+                <div class="card-header"><i class="fas fa-box"></i> Изделия (склад)
+                    <div class="float-end">
+                        <button class="btn btn-sm btn-success me-2" onclick="showCreateProductModal()"><i class="fas fa-plus"></i> Создать</button>
+                        <button class="btn btn-sm btn-primary" onclick="applyAdminProductsFilter()"><i class="fas fa-sync-alt"></i> Обновить</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info small">Сначала выберите <strong>класс</strong>, чтобы не просматривать весь склад. Параметры изделия задаются при создании/редактировании.</div>
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-5"><label class="form-label">Класс изделия</label><select class="form-select" id="adminProdClassFilter">${classOpts}</select></div>
+                        <div class="col-md-5"><label class="form-label">Название или артикул</label><input type="text" class="form-control" id="adminProdTextFilter" placeholder="Часть названия"></div>
+                        <div class="col-md-2 d-flex align-items-end"><button class="btn btn-primary w-100" onclick="applyAdminProductsFilter()"><i class="fas fa-search"></i> Найти</button></div>
+                    </div>
+                    <p class="small text-muted" id="adminProductsCount"></p>
+                    <div class="table-responsive"><table class="table table-bordered" id="adminProductsTable"><thead><tr><th>ID</th><th>Наименование</th><th>Артикул</th><th>Класс</th><th>Действия</th></tr></thead><tbody></tbody></table></div>
+                </div>
+            </div>`;
+        if (adminProductsFilterClass) {
+            document.getElementById('adminProdClassFilter').value = adminProductsFilterClass;
+        }
+        await applyAdminProductsFilter();
+    } catch (e) { showError(e.message); }
 };
 
 async function createTheme() {
@@ -762,6 +1095,244 @@ async function showEditSetModal(id) {
         document.getElementById('editSetAgeId').value = s.age_category_id;
         document.getElementById('editSetThemeId').value = s.theme_id;
         openModal('editSetModal');
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+loadSets = async function() {
+    showLoading();
+    try {
+        await preloadAdminRefs();
+        const themeOpts = '<option value="">— любая тематика —</option>'
+            + buildSelectOptions(adminCache.themes, 'id', 'name');
+        document.getElementById('content').innerHTML = `
+            <div class="card">
+                <div class="card-header"><i class="fas fa-cubes"></i> Наборы LEGO
+                    <div class="float-end">
+                        <button class="btn btn-sm btn-success me-2" onclick="showCreateSetModal()"><i class="fas fa-plus"></i> Создать</button>
+                        <button class="btn btn-sm btn-primary" onclick="applyAdminSetsFilter()"><i class="fas fa-search"></i> Показать</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-4"><label class="form-label">Тематика</label><select class="form-select" id="adminSetTheme">${themeOpts}</select></div>
+                        <div class="col-md-4"><label class="form-label">Поиск</label><input type="text" class="form-control" id="adminSetText" placeholder="Название или каталог"></div>
+                    </div>
+                    <p class="small text-muted" id="adminSetsCount"></p>
+                    <div class="table-responsive"><table class="table table-bordered" id="adminSetsTable"><thead><tr><th>ID</th><th>Название</th><th>Каталог</th><th>Год</th><th>Цена</th><th>Деталей</th><th>Действия</th></tr></thead><tbody></tbody></table></div>
+                </div>
+            </div>`;
+        await applyAdminSetsFilter();
+    } catch (e) { showError(e.message); }
+};
+
+async function applyAdminSetsFilter() {
+    const tbody = document.querySelector('#adminSetsTable tbody');
+    const countEl = document.getElementById('adminSetsCount');
+    if (!tbody) return;
+    try {
+        let sets = await apiRequest('/sets');
+        const themeId = getVal('adminSetTheme');
+        const text = (getVal('adminSetText') || '').toLowerCase();
+        if (themeId) sets = sets.filter(s => String(s.theme_id) === themeId);
+        if (text) sets = sets.filter(s =>
+            (s.name || '').toLowerCase().includes(text)
+            || (s.catalog_number || '').toLowerCase().includes(text)
+        );
+        let rows = '';
+        for (const set of sets) {
+            rows += `<tr><td>${set.id}</td><td>${escapeHtml(set.name)}</td><td>${escapeHtml(set.catalog_number)}</td><td>${set.year}</td><td>$${set.price}</td><td>${set.parts_count}</td>
+                <td class="action-buttons"><button class="btn btn-sm btn-info" onclick="showSetContents(${set.id})"><i class="fas fa-eye"></i></button>
+                <button class="btn btn-sm btn-warning" onclick="showEditSetModal(${set.id})"><i class="fas fa-edit"></i></button>
+                <button class="btn btn-sm btn-danger" onclick="deleteSet(${set.id})"><i class="fas fa-trash"></i></button></td></tr>`;
+        }
+        tbody.innerHTML = rows || '<tr><td colspan="7" class="text-center text-muted">Наборы не найдены</td></tr>';
+        if (countEl) countEl.textContent = `Показано наборов: ${sets.length}`;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${escapeHtml(e.message)}</td></tr>`;
+    }
+}
+
+loadParts = async function() {
+    showLoading();
+    try {
+        await preloadAdminRefs();
+        await loadColorOptions();
+        const typeOpts = buildSelectOptions(adminCache.partTypes, 'id', 'name', '— любой тип —');
+        const colorOpts = buildColorSelectOptions(true);
+        document.getElementById('content').innerHTML = `
+            <div class="card">
+                <div class="card-header"><i class="fas fa-microchip"></i> Детали LEGO
+                    <div class="float-end">
+                        <button class="btn btn-sm btn-success me-2" onclick="showCreatePartModal()"><i class="fas fa-plus"></i> Создать</button>
+                        <button class="btn btn-sm btn-primary" onclick="applyAdminPartsFilter()"><i class="fas fa-search"></i> Показать</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <div class="row g-2 mb-3">
+                        <div class="col-md-3"><label class="form-label">Тип</label><select class="form-select" id="adminPartType">${typeOpts}</select></div>
+                        <div class="col-md-3"><label class="form-label">Цвет</label><select class="form-select" id="adminPartColor">${colorOpts}</select></div>
+                        <div class="col-md-4"><label class="form-label">Название</label><input type="text" class="form-control" id="adminPartText" placeholder="Часть названия"></div>
+                    </div>
+                    <p class="small text-muted" id="adminPartsCount"></p>
+                    <div class="table-responsive"><table class="table table-bordered" id="adminPartsTable"><thead><tr><th>ID</th><th>Название</th><th>Цвет</th><th>Размер</th><th>Вес</th><th>Тип</th><th>Действия</th></tr></thead><tbody></tbody></table></div>
+                </div>
+            </div>`;
+        await applyAdminPartsFilter();
+    } catch (e) { showError(e.message); }
+};
+
+async function applyAdminPartsFilter() {
+    const tbody = document.querySelector('#adminPartsTable tbody');
+    const countEl = document.getElementById('adminPartsCount');
+    if (!tbody) return;
+    try {
+        const body = {};
+        const typeId = getVal('adminPartType');
+        const color = getVal('adminPartColor');
+        const text = getVal('adminPartText');
+        if (typeId) body.part_type_id = parseInt(typeId, 10);
+        if (color) body.color = color;
+        if (text) body.name_contains = text;
+        let parts = Object.keys(body).length
+            ? await apiRequest('/parts/filter', 'POST', body)
+            : await apiRequest('/parts');
+        let rows = '';
+        for (const part of parts) {
+            rows += `<tr><td>${part.id}</td><td>${escapeHtml(part.name)}</td><td>${escapeHtml(part.color)}</td><td>${escapeHtml(part.size)}</td><td>${part.weight}</td><td>${escapeHtml(part.type_name || '—')}</td>
+                <td class="action-buttons"><button class="btn btn-sm btn-warning" onclick="showEditPartModal(${part.id})"><i class="fas fa-edit"></i></button>
+                <button class="btn btn-sm btn-danger" onclick="deletePart(${part.id})"><i class="fas fa-trash"></i></button></td></tr>`;
+        }
+        tbody.innerHTML = rows || '<tr><td colspan="7" class="text-center text-muted">Детали не найдены</td></tr>';
+        if (countEl) countEl.textContent = `Показано деталей: ${parts.length}`;
+    } catch (e) {
+        tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${escapeHtml(e.message)}</td></tr>`;
+    }
+};
+
+loadEnumValuesAll = async function() {
+    showLoading();
+    try {
+        const enums = await apiRequest('/enumerations');
+        let html = `<div class="card"><div class="card-header"><i class="fas fa-tasks"></i> Значения перечислений<div class="float-end"><button class="btn btn-sm btn-primary" onclick="loadEnumValuesAll()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body">`;
+        for (const e of enums) {
+            const values = await apiRequest(`/enumerations/${e.id}/values`);
+            html += `<div class="card mb-3"><div class="card-body"><h5>${escapeHtml(e.name)} (ID: ${e.id})</h5>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <button class="btn btn-sm btn-success" onclick="showAddEnumValueModal(${e.id})"><i class="fas fa-plus"></i> Добавить</button>
+                    <button class="btn btn-sm btn-outline-primary" onclick="reorderEnumByCurrentRows(${e.id})"><i class="fas fa-sort"></i> Сохранить порядок</button>
+                </div>
+                <div class="table-responsive"><table class="table table-sm"><thead><tr><th>ID</th><th>Значение</th><th>Порядок</th><th>Действия</th></tr></thead><tbody>`;
+            for (const v of values) {
+                html += `<tr><td>${v.id}</td><td>${escapeHtml(v.value)}</td><td><input type="number" class="form-control form-control-sm enum-order-input" data-enum-id="${e.id}" data-value-id="${v.id}" value="${v.sort_order}" min="0"></td><td class="action-buttons"><button class="btn btn-sm btn-warning me-1" onclick="showEditEnumValueModal(${v.id}, ${e.id}, '${escapeHtml(v.value).replace(/'/g, '&#39;')}', ${v.sort_order})"><i class="fas fa-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteEnumValue(${v.id})"><i class="fas fa-trash"></i></button></td></tr>`;
+            }
+            html += `</tbody></table></div></div></div>`;
+        }
+        html += `</div></div>`;
+        document.getElementById('content').innerHTML = html;
+    } catch (e) { showError(e.message); }
+};
+
+async function reorderEnumByCurrentRows(enumId) {
+    const inputs = [...document.querySelectorAll(`.enum-order-input[data-enum-id="${enumId}"]`)];
+    const ordered = inputs
+        .map(el => ({ id: parseInt(el.dataset.valueId, 10), order: parseInt(el.value || '0', 10) }))
+        .sort((a, b) => a.order - b.order)
+        .map(x => x.id);
+    if (!ordered.length) return showToast('Нет значений для сортировки', 'info');
+    try {
+        await apiRequest(`/enumerations/${enumId}/values/reorder`, 'PUT', { ordered_ids: ordered });
+        showToast('Порядок значений сохранён');
+        loadEnumValuesAll();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+showEnumValues = async function(enumId) {
+    try {
+        const values = await apiRequest(`/enumerations/${enumId}/values`);
+        let body = '<div class="table-responsive"><table class="table table-sm"><thead><tr><th>ID</th><th>Значение</th><th>Порядок</th></tr></thead><tbody>';
+        for (const v of values) body += `<tr><td>${v.id}</td><td>${escapeHtml(v.value)}</td><td>${v.sort_order}</td></tr>`;
+        body += '</tbody></table></div>';
+        showAdminDynamicModal('Значения перечисления', body, `<button class="btn btn-primary" onclick="bootstrap.Modal.getInstance(this.closest('.modal')).hide(); loadEnumValuesAll();"><i class="fas fa-sort"></i> Изменить порядок</button>`);
+    } catch (e) { showToast(e.message, 'error'); }
+};
+
+async function showHOOpsDetails(opId) {
+    try {
+        const d = await apiRequest(`/ho-operations/${opId}`);
+        const [subjects, products, roles, params] = await Promise.all([
+            apiRequest('/subjects'),
+            apiRequest('/products'),
+            apiRequest(`/ho-types/${d.тип_хо_id}/roles`),
+            apiRequest(`/ho-types/${d.тип_хо_id}/parameters`),
+        ]);
+        let body = `<p><strong>Тип:</strong> ${escapeHtml(d.тип_название || '—')} · <strong>Номер:</strong> ${escapeHtml(d.номер_документа || '')} · <strong>Сумма:</strong> ${formatPrice(d.сумма)}</p>`;
+        body += '<div class="row g-3"><div class="col-lg-4"><h6>Роли</h6>';
+        for (const role of roles) {
+            const assigned = (d.роли || []).find(r => r.роль === role.название);
+            body += `<div class="border rounded p-2 mb-2"><label class="form-label small">${escapeHtml(role.название)}</label>
+                <select class="form-select form-select-sm ho-role-select" data-role-id="${role.id}">
+                    <option value="">— не назначен —</option>${subjects.map(s => `<option value="${s.id}"${String(assigned?.субъект_id || '') === String(s.id) ? ' selected' : ''}>${escapeHtml(s.наименование)}</option>`).join('')}
+                </select></div>`;
+        }
+        body += '</div><div class="col-lg-4"><h6>Параметры операции</h6>';
+        for (const param of params) {
+            const cur = (d.параметры || []).find(p => p.обозначение === param.обозначение);
+            body += `<div class="form-field mb-2"><label class="form-label small">${escapeHtml(param.полное_имя)}${param.обязательный ? ' *' : ''}</label><div id="hoParamWrap_${param.hoparam_id}"></div></div>`;
+        }
+        body += '</div><div class="col-lg-4"><h6>Добавить позицию</h6><div class="form-field mb-2"><label class="form-label small">Изделие</label><select class="form-select form-select-sm" id="hoItemProduct"><option value="">— выберите —</option>';
+        for (const p of products) body += `<option value="${p.id}">${escapeHtml(p.наименование)}${p.артикул ? ' · ' + escapeHtml(p.артикул) : ''}</option>`;
+        body += `</select></div><div class="form-field mb-2"><label class="form-label small">Количество</label><input type="number" class="form-control form-control-sm" id="hoItemQty" step="any" min="0"></div>
+            <div class="form-field mb-2"><label class="form-label small">Цена</label><input type="number" class="form-control form-control-sm" id="hoItemPrice" step="any" min="0"></div>
+            <button class="btn btn-sm btn-success" onclick="addHoItemAdmin(${opId})"><i class="fas fa-plus"></i> Добавить позицию</button></div></div>`;
+        body += '<hr><h6>Текущие позиции</h6><ul class="mb-0">';
+        for (const item of d.позиции || []) body += `<li>${escapeHtml(item.изделие || '—')} — ${item.количество} x ${formatPrice(item.цена)} = ${formatPrice(item.сумма)}</li>`;
+        body += '</ul>';
+        const modal = showAdminDynamicModal('Детали операции', body, `<button class="btn btn-primary" onclick="saveHoDetailsAdmin(${opId})"><i class="fas fa-save"></i> Сохранить роли и параметры</button>`);
+        for (const param of params) {
+            const cur = (d.параметры || []).find(p => p.обозначение === param.обозначение);
+            const wrap = modal.querySelector(`#hoParamWrap_${param.hoparam_id}`);
+            if (wrap) wrap.innerHTML = await buildParamValueControl(param, `hoParam_${param.hoparam_id}`, cur?.значение ?? '');
+        }
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function saveHoDetailsAdmin(opId) {
+    try {
+        const modal = document.querySelector('.modal.show');
+        for (const sel of modal.querySelectorAll('.ho-role-select')) {
+            if (sel.value) {
+                await apiRequest(`/ho-operations/${opId}/actors`, 'PUT', {
+                    роль_хо_id: parseInt(sel.dataset.roleId, 10),
+                    субъект_хо_id: parseInt(sel.value, 10),
+                });
+            }
+        }
+        for (const el of modal.querySelectorAll('[id^="hoParam_"]')) {
+            const hpId = parseInt(el.id.replace('hoParam_', ''), 10);
+            const paramType = el.tagName === 'SELECT' ? 'ENUM' : (el.type === 'number' ? 'REAL' : (el.type === 'datetime-local' ? 'DATETIME' : 'STRING'));
+            const value = normalizeAdminValueByType(el.id, paramType);
+            if (value !== null) await apiRequest(`/ho-operations/${opId}/values`, 'POST', { параметр_хо_id: hpId, value });
+        }
+        showToast('Операция обновлена');
+        bootstrap.Modal.getInstance(modal)?.hide();
+        loadHOOps();
+    } catch (e) { showToast(e.message, 'error'); }
+}
+
+async function addHoItemAdmin(opId) {
+    if (!getVal('hoItemProduct') || !getVal('hoItemQty') || !getVal('hoItemPrice')) {
+        return showToast('Выберите изделие, количество и цену', 'error');
+    }
+    try {
+        await apiRequest(`/ho-operations/${opId}/items`, 'POST', {
+            изделие_id: parseInt(getVal('hoItemProduct'), 10),
+            количество: parseFloat(getVal('hoItemQty')),
+            цена: parseFloat(getVal('hoItemPrice')),
+        });
+        showToast('Позиция добавлена');
+        const modal = document.querySelector('.modal.show');
+        bootstrap.Modal.getInstance(modal)?.hide();
+        showHOOpsDetails(opId);
     } catch (e) { showToast(e.message, 'error'); }
 }
 

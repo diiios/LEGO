@@ -626,6 +626,14 @@ def set_product_value(product_id: int, data: ParameterValueCreate, db: Session =
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
+@app.delete("/products/{product_id}/values/{param_class_id}", tags=["🏷️ Изделия"], response_model=OperationResult)
+def delete_product_value(product_id: int, param_class_id: int, db: Session = Depends(get_db)):
+    """Удалить значение параметра у изделия"""
+    result = classifier.delete_product_param_value(db, product_id, param_class_id)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
 @app.post("/products/filter", tags=["🏷️ Изделия"])
 def filter_products(data: ProductFilter, db: Session = Depends(get_db)):
     """Фильтрация изделий по классам и параметрам"""

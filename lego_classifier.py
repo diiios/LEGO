@@ -1640,6 +1640,7 @@ class LegoClassifier:
                 "полное_имя": param.полное_имя,
                 "тип_параметра": param.тип_параметра,
                 "единица_измерения": param.единица_измерения,
+                "перечисление_id": param.перечисление_id,
                 "мин_значение": pc.мин_значение,
                 "макс_значение": pc.макс_значение,
                 "значение_по_умолчанию": pc.значение_по_умолчанию,
@@ -1803,6 +1804,22 @@ class LegoClassifier:
             db.rollback()
             return {"success": False, "message": str(e)}
 
+    def delete_product_param_value(self, db: Session, product_id: int, param_class_id: int) -> Dict[str, Any]:
+        """Удалить значение параметра у изделия (отвязать)."""
+        existing = db.query(ParameterValue).filter(
+            ParameterValue.изделие_id == product_id,
+            ParameterValue.параметр_класса_id == param_class_id
+        ).first()
+        if not existing:
+            return {"success": True, "message": "Значение не было задано"}
+        try:
+            db.delete(existing)
+            db.commit()
+            return {"success": True, "message": "Значение параметра удалено"}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
     def get_product_params_with_values(self, db: Session, product_id: int) -> List[Dict[str, Any]]:
         """Получить все параметры изделия с их значениями"""
         product = db.query(Product).filter(Product.id == product_id).first()
@@ -1832,15 +1849,30 @@ class LegoClassifier:
                         enum_val = db.query(EnumValue).filter(EnumValue.id == param_value.значение_перечисление_id).first()
                         value_display = enum_val.value if enum_val else None
             
+            raw_value = None
+            if param_value:
+                if cp["тип_параметра"] in ('REAL', 'INTEGER'):
+                    raw_value = param_value.значение_число
+                elif cp["тип_параметра"] == 'STRING':
+                    raw_value = param_value.значение_строка
+                elif cp["тип_параметра"] == 'DATETIME' and param_value.значение_дата:
+                    raw_value = param_value.значение_дата.isoformat()
+                elif cp["тип_параметра"] == 'ENUM':
+                    raw_value = param_value.значение_перечисление_id
+
             result.append({
                 "param_class_id": cp["param_class_id"],
                 "обозначение": cp["обозначение"],
                 "полное_имя": cp["полное_имя"],
                 "тип_параметра": cp["тип_параметра"],
                 "единица_измерения": cp["единица_измерения"],
+                "перечисление_id": cp.get("перечисление_id"),
                 "значение": value_display,
+                "raw_value": raw_value,
                 "значение_по_умолчанию": cp["значение_по_умолчанию"],
-                "обязательный": cp["обязательный"]
+                "обязательный": cp["обязательный"],
+                "мин_значение": cp.get("мин_значение"),
+                "макс_значение": cp.get("макс_значение"),
             })
         
         return result
@@ -1923,7 +1955,17 @@ class LegoClassifier:
                 query = query.filter(Product.класс_id.in_(all_class_ids))
 
         products = query.all()
-        return [{"id": p.id, "наименование": p.наименование, "артикул": p.артикул} for p in products]
+        out = []
+        for p in products:
+            class_node = db.query(Classificator).filter(Classificator.id == p.класс_id).first()
+            out.append({
+                "id": p.id,
+                "наименование": p.наименование,
+                "артикул": p.артикул,
+                "класс_id": p.класс_id,
+                "класс_название": class_node.название if class_node else None,
+            })
+        return out
     
     # lego_classifier.py - добавить в класс LegoClassifier
 

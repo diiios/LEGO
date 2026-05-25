@@ -3,6 +3,8 @@ let cacheThemes = [];
 let cacheAgeCategories = [];
 let cachePartTypes = [];
 let cacheParameters = [];
+/** Параметры, привязанные к выбранному классу изделия (для фильтра) */
+let cacheClassParams = [];
 let selectedClassId = null;
 /** @type {Array<{param_code:string, operator:string, value?:any, min?:number, max?:number, _label?:string}>} */
 let productParamFilters = [];
@@ -78,7 +80,7 @@ async function loadClassifier() {
     setActiveNav(document.querySelector('[data-page="classifier"]'));
     showLoading();
     try {
-        const trees = await apiRequest('/categories/tree?include_products=true');
+        const trees = await apiRequest('/categories/tree');
         window.selectTreeNode = (id, name) => {
             selectedClassId = id;
             const classEl = document.getElementById('fProdClass');
@@ -319,7 +321,17 @@ async function applyPartsFilters() {
         if (text) body.name_contains = text;
 
         let parts;
-        if (body.part_type_id || body.color || body.name_contains) {
+        if (body.part_type_id && !body.color && !body.name_contains) {
+            const selectedType = document.getElementById('fPartType')?.selectedOptions[0]?.text || '';
+            const byType = await apiRequest(`/search/part-type?part_type=${encodeURIComponent(selectedType)}`);
+            parts = byType.map(p => ({
+                name: p.part_name,
+                color: p.color,
+                size: p.size,
+                weight: p.weight,
+                type_name: p.type_name,
+            }));
+        } else if (body.part_type_id || body.color || body.name_contains) {
             parts = await apiRequest('/parts/filter', 'POST', body);
         } else {
             parts = await apiRequest('/parts');
@@ -373,29 +385,25 @@ async function loadProductsFilter() {
     setActiveNav(document.querySelector('[data-page="products"]'));
     showLoading();
     try {
-        if (!cacheParameters.length) await preloadReferences();
         const cats = REF_CACHE.categories || await loadCategoriesList();
-        const classOpts = buildCategorySelectOptions(cats, '— все классы —');
-        const paramOpts = '<option value="">— без отбора по параметру —</option>' + cacheParameters.map(p =>
-            `<option value="${escapeHtml(p.обозначение)}" data-type="${p.тип_параметра}" data-enum="${p.перечисление_id || ''}">${escapeHtml(p.полное_имя)}${p.единица_измерения ? ' (' + escapeHtml(p.единица_измерения) + ')' : ''}</option>`
-        ).join('');
+        const classOpts = buildCategorySelectOptions(cats, '— выберите класс —');
         document.getElementById('content').innerHTML = `
             <div class="page-header"><h1>Изделия (склад)</h1><p class="subtitle">Товары с артикулом и настраиваемыми параметрами — для учёта и продажи</p></div>
             ${entityInfoHtml('product')}
             <div class="filter-panel">
                 <div class="filter-title"><i class="fas fa-sliders-h"></i> Поиск по классу и параметрам из справочника</div>
                 <div class="filter-grid">
-                    <div class="form-field"><label class="form-label" for="fProdClass">Класс изделия</label><select class="form-select" id="fProdClass">${classOpts}</select>
-                    <div class="form-hint">Можно выбрать узел в «Классификаторе» — он подставится сюда</div></div>
+                    <div class="form-field"><label class="form-label" for="fProdClass">Класс изделия *</label><select class="form-select" id="fProdClass" onchange="onUserProductClassChange()">${classOpts}</select>
+                    <div class="form-hint">Обязательно для поиска. Узел из «Классификатора» подставится сюда. Параметры фильтра — только для выбранного класса.</div></div>
                 </div>
-                <div class="filter-condition-card">
+                <div class="filter-condition-card" id="productParamFilterSection">
                     <div class="condition-title">Параметры изделия</div>
-                    <p class="form-hint mb-2">Параметры берутся из таблицы «Параметр» (вес, цвет, материал…), не из полей детали. Добавьте одно или несколько условий — изделие должно соответствовать <strong>всем</strong> сразу.</p>
+                    <p class="form-hint mb-2">Список параметров зависит от класса (не весь справочник). Добавьте условия — изделие должно соответствовать <strong>всем</strong> сразу.</p>
                     <div id="productFiltersList" class="product-filters-list mb-3"></div>
                     <div class="filter-builder-box">
                         <div class="filter-builder-title">Новое условие</div>
                         <div class="filter-grid">
-                            <div class="form-field"><label class="form-label" for="fProdParam">Параметр</label><select class="form-select" id="fProdParam" onchange="onProductParamChange()">${paramOpts.replace('— без отбора по параметру —', '— выберите параметр —')}</select></div>
+                            <div class="form-field"><label class="form-label" for="fProdParam">Параметр</label><select class="form-select" id="fProdParam" onchange="onProductParamChange()"><option value="">— сначала выберите класс —</option></select></div>
                         </div>
                         <div id="fProdValueArea"></div>
                         <button type="button" class="btn-app btn-app-outline mt-2" onclick="addProductParamFilter()"><i class="fas fa-plus"></i> Добавить условие</button>
@@ -406,17 +414,51 @@ async function loadProductsFilter() {
                     <button type="button" class="btn-app btn-app-secondary" onclick="resetProductsFilter()"><i class="fas fa-undo"></i> Сбросить всё</button>
                 </div>
             </div>
-            <div id="productsResults"></div>`;
+            <div id="productsResults"><div class="empty-state"><p>Выберите класс изделия и нажмите «Найти изделия».</p></div></div>`;
         const classEl = document.getElementById('fProdClass');
-        if (classEl && selectedClassId) classEl.value = String(selectedClassId);
-        productParamFilters = [];
-        renderProductFiltersList();
-        onProductParamChange();
+        if (classEl && selectedClassId) {
+            classEl.value = String(selectedClassId);
+            await onUserProductClassChange();
+        } else {
+            productParamFilters = [];
+            renderProductFiltersList();
+        }
     } catch (e) { showError(e.message); }
 }
 
+async function onUserProductClassChange() {
+    const classId = getVal('fProdClass');
+    const sel = document.getElementById('fProdParam');
+    const section = document.getElementById('productParamFilterSection');
+    productParamFilters = [];
+    renderProductFiltersList();
+    document.getElementById('fProdValueArea').innerHTML = '';
+
+    if (!classId) {
+        cacheClassParams = [];
+        if (sel) sel.innerHTML = '<option value="">— сначала выберите класс —</option>';
+        if (section) section.style.opacity = '0.5';
+        return;
+    }
+    if (section) section.style.opacity = '1';
+    try {
+        cacheClassParams = await apiRequest(`/classes/${classId}/parameters`);
+        let opts = '<option value="">— выберите параметр —</option>';
+        for (const p of cacheClassParams) {
+            opts += `<option value="${escapeHtml(p.обозначение)}" data-type="${p.тип_параметра}" data-enum="${p.перечисление_id || ''}">${escapeHtml(p.полное_имя)}${p.единица_измерения ? ' (' + escapeHtml(p.единица_измерения) + ')' : ''}</option>`;
+        }
+        if (sel) sel.innerHTML = opts;
+        if (!cacheClassParams.length) {
+            showToast('У этого класса нет привязанных параметров', 'info');
+        }
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
 function getParamMetaByCode(code) {
-    return cacheParameters.find(p => p.обозначение === code);
+    return cacheClassParams.find(p => p.обозначение === code)
+        || cacheParameters.find(p => p.обозначение === code);
 }
 
 function formatProductFilterLabel(pf) {
@@ -615,12 +657,11 @@ function resetProductsFilter() {
     const classEl = document.getElementById('fProdClass');
     if (classEl) classEl.value = '';
     productParamFilters = [];
+    cacheClassParams = [];
     renderProductFiltersList();
-    const paramEl = document.getElementById('fProdParam');
-    if (paramEl) paramEl.value = '';
-    onProductParamChange();
+    onUserProductClassChange();
     clearFormErrors(document.getElementById('content'));
-    applyProductsFilter();
+    document.getElementById('productsResults').innerHTML = '<div class="empty-state"><p>Выберите класс изделия и нажмите «Найти изделия».</p></div>';
 }
 
 function buildProductFilterPayload() {
@@ -641,6 +682,14 @@ function buildProductFilterPayload() {
 }
 
 async function applyProductsFilter() {
+    const classId = getVal('fProdClass');
+    if (!classId) {
+        setFieldError('fProdClass', 'Выберите класс изделия');
+        showToast('Укажите класс — так проще ориентироваться в каталоге', 'info');
+        return;
+    }
+    clearFieldError('fProdClass');
+
     const pendingCode = getVal('fProdParam');
     if (pendingCode && !validateCurrentProductCondition()) return;
 
@@ -648,12 +697,7 @@ async function applyProductsFilter() {
     resultsEl.innerHTML = `<div class="loading-state"><div class="spinner"></div></div>`;
     try {
         const body = buildProductFilterPayload();
-        let products;
-        if (body.class_ids || body.param_filters) {
-            products = await apiRequest('/products/filter', 'POST', body);
-        } else {
-            products = await apiRequest('/products');
-        }
+        let products = await apiRequest('/products/filter', 'POST', body);
         if (!products.length) {
             resultsEl.innerHTML = `<div class="empty-state"><p>Изделия не найдены. Измените условия.</p></div>`;
             return;

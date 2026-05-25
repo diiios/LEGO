@@ -95,14 +95,18 @@
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createEnumeration()">Создать</button></div>
 </div></div></div>
 
-<div class="modal fade modal-app" id="createProductModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+<div class="modal fade modal-app" id="createProductModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Создание изделия</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body">
-        <div class="form-field mb-3"><label class="form-label" for="productName">Наименование *</label><input type="text" class="form-control" id="productName"></div>
-        <div class="form-field mb-3"><label class="form-label" for="productArticle">Артикул</label><input type="text" class="form-control" id="productArticle"></div>
-        <div class="form-field"><label class="form-label" for="productClassId">Класс в классификаторе *</label><select class="form-select" id="productClassId"></select></div>
+        <div class="row g-3">
+            <div class="col-md-6 form-field"><label class="form-label" for="productName">Наименование *</label><input type="text" class="form-control" id="productName"></div>
+            <div class="col-md-6 form-field"><label class="form-label" for="productArticle">Артикул</label><input type="text" class="form-control" id="productArticle"></div>
+            <div class="col-12 form-field"><label class="form-label" for="productClassId">Класс в классификаторе *</label><select class="form-select" id="productClassId"></select>
+            <div class="form-hint">От класса зависят доступные параметры (вес, длина, цвет…)</div></div>
+        </div>
+        <div id="productParamsCreateArea" class="mt-3 border-top pt-3"></div>
     </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createProduct()">Создать</button></div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createProduct()">Создать изделие</button></div>
 </div></div></div>
 
 <div class="modal fade modal-app" id="createHOTypeModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
@@ -192,12 +196,15 @@
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateMinifigure()">Сохранить</button></div>
 </div></div></div>
 
-<div class="modal fade modal-app" id="editProductModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+<div class="modal fade modal-app" id="editProductModal" tabindex="-1"><div class="modal-dialog modal-lg"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Редактирование изделия</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body"><input type="hidden" id="editProductId">
-        <div class="form-field mb-3"><label class="form-label" for="editProductName">Наименование *</label><input type="text" class="form-control" id="editProductName"></div>
-        <div class="form-field mb-3"><label class="form-label" for="editProductArticle">Артикул</label><input type="text" class="form-control" id="editProductArticle"></div>
-        <div class="form-field"><label class="form-label" for="editProductClassId">Класс *</label><select class="form-select" id="editProductClassId"></select></div>
+        <div class="row g-3">
+            <div class="col-md-6 form-field"><label class="form-label" for="editProductName">Наименование *</label><input type="text" class="form-control" id="editProductName"></div>
+            <div class="col-md-6 form-field"><label class="form-label" for="editProductArticle">Артикул</label><input type="text" class="form-control" id="editProductArticle"></div>
+            <div class="col-12 form-field"><label class="form-label" for="editProductClassId">Класс *</label><select class="form-select" id="editProductClassId"></select></div>
+        </div>
+        <div id="productParamsEditArea" class="mt-3 border-top pt-3"></div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateProduct()">Сохранить</button></div>
 </div></div></div>
