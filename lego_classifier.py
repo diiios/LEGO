@@ -1876,7 +1876,7 @@ class LegoClassifier:
             })
         
         return result
-
+    
     # ----- Фильтрация изделий по параметрам -----
 
     def filter_products(self, db: Session, class_ids: List[int] = None,
