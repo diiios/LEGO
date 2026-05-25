@@ -83,19 +83,17 @@ function validateSetForm(p) {
     return runValidation(rules);
 }
 
+function setCurrentYearMax(...ids) {
+    const currentYear = new Date().getFullYear();
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.max = String(currentYear);
+    });
+}
+
 function validatePartForm(p) {
     const rules = [
         () => V.text(`${p}Name`, 'Название'),
-        () => V.requiredSelect(`${p}Color`, 'Цвет'),
-        () => V.text(`${p}Size`, 'Размер'),
-        () => V.nonNegative(`${p}Weight`, 'Вес'),
-        () => {
-            const err = V.nonNegative(`${p}Weight`, 'Вес');
-            if (err) return err;
-            const w = parseFloat(getVal(`${p}Weight`));
-            if (w > 500) return { fieldId: `${p}Weight`, message: 'Вес детали: не более 500 г (элемент LEGO)' };
-            return null;
-        },
         () => V.requiredSelect(`${p}TypeId`, 'Тип детали'),
     ];
     return runValidation(rules);
@@ -191,6 +189,34 @@ function normalizeAdminValueByType(fieldId, type) {
     return raw;
 }
 
+let classParamDefinitions = [];
+
+function selectedClassParamDefinition() {
+    const id = parseInt(getVal('classParamParam'), 10);
+    return classParamDefinitions.find(p => p.id === id) || null;
+}
+
+function renderClassParamConstraintFields() {
+    const param = selectedClassParamDefinition();
+    const box = document.getElementById('classParamConstraints');
+    if (!box || !param) return;
+    const type = String(param.тип_параметра || '').toUpperCase();
+    const isNumber = type === 'REAL' || type === 'INTEGER';
+    const defaultType = isNumber ? 'number' : (type === 'DATETIME' ? 'datetime-local' : 'text');
+    const step = type === 'INTEGER' ? '1' : 'any';
+    let html = '';
+    if (isNumber) {
+        html += `<div class="col-md-3"><input type="number" class="form-control" id="classParamMin" step="${step}" placeholder="Мин. значение"></div>
+            <div class="col-md-3"><input type="number" class="form-control" id="classParamMax" step="${step}" placeholder="Макс. значение"></div>
+            <div class="col-md-3"><input type="number" class="form-control" id="classParamDefault" step="${step}" placeholder="По умолчанию"></div>`;
+    } else {
+        html += `<input type="hidden" id="classParamMin"><input type="hidden" id="classParamMax">
+            <div class="col-md-9"><input type="${defaultType}" class="form-control" id="classParamDefault" placeholder="Значение по умолчанию"></div>`;
+    }
+    html += `<div class="col-md-3 d-flex align-items-center"><label class="form-check mb-0"><input type="checkbox" class="form-check-input" id="classParamRequired"> Обязательный</label></div>`;
+    box.innerHTML = html;
+}
+
 // Переопределение show*Modal
 const _showCreateCategoryModal = typeof showCreateCategoryModal === 'function' ? showCreateCategoryModal : null;
 async function showCreateCategoryModal() {
@@ -205,6 +231,7 @@ async function showCreateCategoryModal() {
 async function showCreateSetModal() {
     await fillSetSelects('set');
     ['setName', 'setCatalog', 'setYear', 'setPrice', 'setParts', 'setAgeId', 'setThemeId'].forEach(clearFieldError);
+    setCurrentYearMax('setYear');
     document.getElementById('setName').value = '';
     document.getElementById('setCatalog').value = '';
     document.getElementById('setYear').value = '';
@@ -216,13 +243,9 @@ async function showCreateSetModal() {
 }
 
 async function showCreatePartModal() {
-    await setupColorSelect('partColor');
     await fillPartTypeSelect('part');
-    ['partName', 'partColor', 'partSize', 'partWeight', 'partTypeId'].forEach(clearFieldError);
+    ['partName', 'partTypeId'].forEach(clearFieldError);
     document.getElementById('partName').value = '';
-    document.getElementById('partColor').value = '';
-    document.getElementById('partSize').value = '';
-    document.getElementById('partWeight').value = '';
     document.getElementById('partTypeId').value = '';
     openModal('createPartModal');
 }
@@ -291,13 +314,9 @@ async function showEditParameterModal(id) {
 async function showEditPartModal(id) {
     try {
         const p = await apiRequest(`/parts/${id}`);
-        await setupColorSelect('editPartColor');
         await fillPartTypeSelect('editPart');
         document.getElementById('editPartId').value = p.id;
         document.getElementById('editPartName').value = p.name;
-        document.getElementById('editPartColor').value = p.color;
-        document.getElementById('editPartSize').value = p.size;
-        document.getElementById('editPartWeight').value = p.weight;
         document.getElementById('editPartTypeId').value = p.part_type_id;
         openModal('editPartModal');
     } catch (e) { showToast(e.message, 'error'); }
@@ -422,8 +441,7 @@ async function updateSet() {
 async function createPart() {
     if (!validatePartForm('part')) return;
     const data = {
-        name: getVal('partName'), color: getVal('partColor'), size: getVal('partSize'),
-        weight: parseFloat(getVal('partWeight')), part_type_id: parseInt(getVal('partTypeId'), 10),
+        name: getVal('partName'), part_type_id: parseInt(getVal('partTypeId'), 10),
     };
     try {
         await apiRequest('/parts', 'POST', data);
@@ -437,8 +455,7 @@ async function updatePart() {
     if (!validatePartForm('editPart')) return;
     const id = document.getElementById('editPartId').value;
     const data = {
-        name: getVal('editPartName'), color: getVal('editPartColor'), size: getVal('editPartSize'),
-        weight: parseFloat(getVal('editPartWeight')), part_type_id: parseInt(getVal('editPartTypeId'), 10),
+        name: getVal('editPartName'), part_type_id: parseInt(getVal('editPartTypeId'), 10),
     };
     try {
         await apiRequest(`/parts/${id}`, 'PUT', data);
@@ -767,6 +784,7 @@ async function loadClassParametersAdmin() {
     showLoading();
     try {
         await Promise.all([loadCategoriesList(), preloadAdminRefs()]);
+        classParamDefinitions = await apiRequest('/parameters');
         const classOpts = buildCategorySelectOptions(REF_CACHE.categories, '— выберите класс —');
         document.getElementById('content').innerHTML = `
             <div class="card">
@@ -774,19 +792,15 @@ async function loadClassParametersAdmin() {
                 <div class="card-body">
                     <div class="row g-2 mb-3">
                         <div class="col-md-5"><label class="form-label">Класс</label><select class="form-select" id="classParamClass" onchange="loadClassParametersTable()">${classOpts}</select></div>
-                        <div class="col-md-5"><label class="form-label">Параметр</label><select class="form-select" id="classParamParam">${buildSelectOptions(await apiRequest('/parameters'), 'id', 'полное_имя')}</select></div>
+                        <div class="col-md-5"><label class="form-label">Параметр</label><select class="form-select" id="classParamParam" onchange="renderClassParamConstraintFields()">${buildSelectOptions(classParamDefinitions, 'id', 'полное_имя')}</select></div>
                         <div class="col-md-2 d-flex align-items-end"><button class="btn btn-success w-100" onclick="addParamToClassAdmin()"><i class="fas fa-plus"></i> Привязать</button></div>
                     </div>
-                    <div class="row g-2 mb-3">
-                        <div class="col-md-3"><input type="number" class="form-control" id="classParamMin" step="any" placeholder="Мин. значение"></div>
-                        <div class="col-md-3"><input type="number" class="form-control" id="classParamMax" step="any" placeholder="Макс. значение"></div>
-                        <div class="col-md-3"><input type="text" class="form-control" id="classParamDefault" placeholder="По умолчанию"></div>
-                        <div class="col-md-3 d-flex align-items-center"><label class="form-check mb-0"><input type="checkbox" class="form-check-input" id="classParamRequired"> Обязательный</label></div>
-                    </div>
+                    <div class="row g-2 mb-3" id="classParamConstraints"></div>
                     <div class="alert alert-info small">Таблица показывает параметры выбранного класса вместе с унаследованными от родителей.</div>
                     <div id="classParamsResult"></div>
                 </div>
             </div>`;
+        renderClassParamConstraintFields();
     } catch (e) { showError(e.message); }
 }
 
@@ -815,10 +829,22 @@ async function addParamToClassAdmin() {
     const classId = getVal('classParamClass');
     const paramId = getVal('classParamParam');
     if (!classId || !paramId) return showToast('Выберите класс и параметр', 'error');
+    const param = selectedClassParamDefinition();
+    const type = String(param?.тип_параметра || '').toUpperCase();
+    const numeric = type === 'REAL' || type === 'INTEGER';
+    if (numeric) {
+        const minVal = getVal('classParamMin');
+        const maxVal = getVal('classParamMax');
+        const defVal = getVal('classParamDefault');
+        if (minVal && Number.isNaN(Number(minVal))) return showToast('Мин. значение должно быть числом', 'error');
+        if (maxVal && Number.isNaN(Number(maxVal))) return showToast('Макс. значение должно быть числом', 'error');
+        if (defVal && Number.isNaN(Number(defVal))) return showToast('Значение по умолчанию должно быть числом', 'error');
+        if (minVal && maxVal && Number(minVal) > Number(maxVal)) return showToast('Мин. значение не может быть больше максимального', 'error');
+    }
     const payload = {
         параметр_id: parseInt(paramId, 10),
-        мин_значение: getVal('classParamMin') ? parseFloat(getVal('classParamMin')) : null,
-        макс_значение: getVal('classParamMax') ? parseFloat(getVal('classParamMax')) : null,
+        мин_значение: numeric && getVal('classParamMin') ? parseFloat(getVal('classParamMin')) : null,
+        макс_значение: numeric && getVal('classParamMax') ? parseFloat(getVal('classParamMax')) : null,
         значение_по_умолчанию: getVal('classParamDefault') || null,
         обязательный: document.getElementById('classParamRequired')?.checked || false,
     };
@@ -1086,6 +1112,7 @@ async function showEditSetModal(id) {
     try {
         const s = await apiRequest(`/sets/${id}`);
         await fillSetSelects('editSet');
+        setCurrentYearMax('editSetYear');
         document.getElementById('editSetId').value = s.id;
         document.getElementById('editSetName').value = s.name;
         document.getElementById('editSetCatalog').value = s.catalog_number;
@@ -1152,13 +1179,70 @@ async function applyAdminSetsFilter() {
     }
 }
 
+async function showSetContents(setId) {
+    try {
+        const [contents, products] = await Promise.all([
+            apiRequest(`/sets/${setId}/contents`),
+            apiRequest('/products'),
+        ]);
+        const productOpts = buildSelectOptions(products, 'id', 'наименование', '— выберите изделие —');
+        let rows = '';
+        for (const item of contents) {
+            const sku = item.sku ? ` <code>${escapeHtml(item.sku)}</code>` : '';
+            const actions = item.item_type === 'Изделие'
+                ? `<button class="btn btn-sm btn-outline-danger" onclick="deleteSetProductItem(${setId}, ${item.item_id})"><i class="fas fa-trash"></i></button>`
+                : '';
+            rows += `<tr><td>${escapeHtml(item.item_type)}</td><td>${escapeHtml(item.item_name)}${sku}</td><td>${item.quantity}</td><td>${actions}</td></tr>`;
+        }
+        const body = `
+            <div class="table-responsive mb-3">
+                <table class="table table-sm table-bordered">
+                    <thead><tr><th>Тип</th><th>Наименование</th><th>Количество</th><th></th></tr></thead>
+                    <tbody>${rows || '<tr><td colspan="4" class="text-center text-muted">Состав пуст</td></tr>'}</tbody>
+                </table>
+            </div>
+            <div class="row g-2 align-items-end">
+                <div class="col-md-8"><label class="form-label">Изделие</label><select class="form-select" id="setContentProductId">${productOpts}</select></div>
+                <div class="col-md-2"><label class="form-label">Кол-во</label><input type="number" class="form-control" id="setContentQty" min="1" value="1"></div>
+                <div class="col-md-2"><button class="btn btn-success w-100" onclick="addSetProductItem(${setId})"><i class="fas fa-plus"></i></button></div>
+            </div>`;
+        showAdminDynamicModal('Состав набора', body);
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function addSetProductItem(setId) {
+    const productId = parseInt(getVal('setContentProductId'), 10);
+    const quantity = parseInt(getVal('setContentQty'), 10);
+    if (!productId || !quantity || quantity < 1) return showToast('Выберите изделие и количество', 'error');
+    try {
+        await apiRequest(`/sets/${setId}/contents`, 'POST', { product_id: productId, quantity });
+        showToast('Состав обновлён');
+        bootstrap.Modal.getInstance(document.querySelector('.modal.show'))?.hide();
+        showSetContents(setId);
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
+async function deleteSetProductItem(setId, productId) {
+    if (!confirm('Удалить изделие из состава набора?')) return;
+    try {
+        await apiRequest(`/sets/${setId}/contents/${productId}`, 'DELETE');
+        showToast('Позиция удалена');
+        bootstrap.Modal.getInstance(document.querySelector('.modal.show'))?.hide();
+        showSetContents(setId);
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
+
 loadParts = async function() {
     showLoading();
     try {
         await preloadAdminRefs();
-        await loadColorOptions();
         const typeOpts = buildSelectOptions(adminCache.partTypes, 'id', 'name', '— любой тип —');
-        const colorOpts = buildColorSelectOptions(true);
         document.getElementById('content').innerHTML = `
             <div class="card">
                 <div class="card-header"><i class="fas fa-microchip"></i> Детали LEGO
@@ -1169,12 +1253,11 @@ loadParts = async function() {
                 </div>
                 <div class="card-body">
                     <div class="row g-2 mb-3">
-                        <div class="col-md-3"><label class="form-label">Тип</label><select class="form-select" id="adminPartType">${typeOpts}</select></div>
-                        <div class="col-md-3"><label class="form-label">Цвет</label><select class="form-select" id="adminPartColor">${colorOpts}</select></div>
+                        <div class="col-md-4"><label class="form-label">Тип</label><select class="form-select" id="adminPartType">${typeOpts}</select></div>
                         <div class="col-md-4"><label class="form-label">Название</label><input type="text" class="form-control" id="adminPartText" placeholder="Часть названия"></div>
                     </div>
                     <p class="small text-muted" id="adminPartsCount"></p>
-                    <div class="table-responsive"><table class="table table-bordered" id="adminPartsTable"><thead><tr><th>ID</th><th>Название</th><th>Цвет</th><th>Размер</th><th>Вес</th><th>Тип</th><th>Действия</th></tr></thead><tbody></tbody></table></div>
+                    <div class="table-responsive"><table class="table table-bordered" id="adminPartsTable"><thead><tr><th>ID</th><th>Название</th><th>Тип</th><th>Действия</th></tr></thead><tbody></tbody></table></div>
                 </div>
             </div>`;
         await applyAdminPartsFilter();
@@ -1188,24 +1271,22 @@ async function applyAdminPartsFilter() {
     try {
         const body = {};
         const typeId = getVal('adminPartType');
-        const color = getVal('adminPartColor');
         const text = getVal('adminPartText');
         if (typeId) body.part_type_id = parseInt(typeId, 10);
-        if (color) body.color = color;
         if (text) body.name_contains = text;
         let parts = Object.keys(body).length
             ? await apiRequest('/parts/filter', 'POST', body)
             : await apiRequest('/parts');
         let rows = '';
         for (const part of parts) {
-            rows += `<tr><td>${part.id}</td><td>${escapeHtml(part.name)}</td><td>${escapeHtml(part.color)}</td><td>${escapeHtml(part.size)}</td><td>${part.weight}</td><td>${escapeHtml(part.type_name || '—')}</td>
+            rows += `<tr><td>${part.id}</td><td>${escapeHtml(part.name)}</td><td>${escapeHtml(part.type_name || '—')}</td>
                 <td class="action-buttons"><button class="btn btn-sm btn-warning" onclick="showEditPartModal(${part.id})"><i class="fas fa-edit"></i></button>
                 <button class="btn btn-sm btn-danger" onclick="deletePart(${part.id})"><i class="fas fa-trash"></i></button></td></tr>`;
         }
-        tbody.innerHTML = rows || '<tr><td colspan="7" class="text-center text-muted">Детали не найдены</td></tr>';
+        tbody.innerHTML = rows || '<tr><td colspan="4" class="text-center text-muted">Детали не найдены</td></tr>';
         if (countEl) countEl.textContent = `Показано деталей: ${parts.length}`;
     } catch (e) {
-        tbody.innerHTML = `<tr><td colspan="7" class="text-danger">${escapeHtml(e.message)}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="4" class="text-danger">${escapeHtml(e.message)}</td></tr>`;
     }
 };
 

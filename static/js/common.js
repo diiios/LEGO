@@ -192,9 +192,9 @@ function toggleTreeBranch(el) {
 function entityInfoHtml(kind) {
     if (kind === 'part') {
         return `<div class="entity-info entity-info-part" role="note">
-            <strong><i class="fas fa-microchip"></i> Деталь</strong> — конструктивный элемент LEGO для наборов (работы 1.1–1.2).
-            Жёсткие поля: тип, цвет, размер, вес. Входит в <em>состав набора</em>, не продаётся отдельно на складе.
-            <span class="entity-info-hint">Пример: «Кирпич 2×4 красный».</span>
+            <strong><i class="fas fa-microchip"></i> Деталь</strong> — конструктивный тип элемента LEGO для наборов.
+            Характеристики вроде цвета, размера и веса задаются у складских изделий через параметры класса.
+            <span class="entity-info-hint">Пример: «Кирпич 2x4», тип «Кирпич».</span>
         </div>`;
     }
     if (kind === 'product') {
@@ -202,7 +202,7 @@ function entityInfoHtml(kind) {
             <strong><i class="fas fa-box"></i> Изделие</strong> — товар на складе с артикулом (работа 1.3).
             Гибкие <em>параметры</em> из справочника (вес, цвет, материал…), привязка к классу изделия.
             Используется как складская номенклатура с настраиваемыми характеристиками. Параметры здесь — не поля детали.
-            <span class="entity-info-hint">Пример: «Кирпич красный», артикул BR001, параметр «вес» = 2.5.</span>
+            <span class="entity-info-hint">Пример: изделие «Кирпич 2x4», артикул BR-2X4-RED, параметр «цвет» = Красный.</span>
         </div>`;
     }
     return `<div class="entity-info entity-info-compare" role="note">
@@ -210,3 +210,11 @@ function entityInfoHtml(kind) {
         <p class="mb-0 small text-muted">Ищете деталь для каталога конструктора → раздел «Детали». Подбор товара по характеристикам → «Изделия».</p>
     </div>`;
 }
+
+document.addEventListener('DOMContentLoaded', () => {
+    const currentYear = new Date().getFullYear();
+    ['setYear', 'editSetYear', 'fYearMin', 'fYearMax'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.max = String(currentYear);
+    });
+});

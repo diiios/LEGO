@@ -235,9 +235,6 @@ class LegoClassifier:
         return {
             "id": part.id,
             "name": part.classificator.название if part.classificator else "",
-            "color": part.цвет,
-            "size": part.размер,
-            "weight": part.вес,
             "part_type_id": part.id_типа,
             "type_name": type_name,
         }
@@ -248,20 +245,22 @@ class LegoClassifier:
             joinedload(Part.part_type).joinedload(PartType.classificator),
         )
 
-    def add_part(self, db: Session, name: str, color: str, size: str, weight: float, part_type_id: int) -> Dict[str, Any]:
+    def add_part(self, db: Session, name: str, part_type_id: int) -> Dict[str, Any]:
         """Добавление детали"""
-        if weight is None or weight < 0 or weight > 500:
-            return {"success": False, "message": "Вес детали должен быть от 0 до 500 г"}
-        node_result = self.add_node(db, name, "терминальный", None)
-        if not node_result["success"]:
-            return node_result
+        existing_node = db.query(Classificator).filter(Classificator.название == name).first()
+        if existing_node:
+            if db.query(Part).filter(Part.id_классификатора == existing_node.id).first():
+                return {"success": False, "message": "Деталь с таким именем уже существует", "product_id": None}
+            node_id = existing_node.id
+        else:
+            node_result = self.add_node(db, name, "терминальный", None)
+            if not node_result["success"]:
+                return node_result
+            node_id = node_result["node_id"]
         
         try:
             new_part = Part(
-                id_классификатора=node_result["node_id"],
-                цвет=color,
-                размер=size,
-                вес=weight,
+                id_классификатора=node_id,
                 id_типа=part_type_id
             )
             db.add(new_part)
@@ -296,14 +295,15 @@ class LegoClassifier:
     def get_set_contents(self, db: Session, set_id: int) -> List[Dict[str, Any]]:
         """Получение состава набора"""
         sql = text("""
-            SELECT 'Деталь' as item_type, кл.название as item_name, сн.количество_штук as quantity, д.цвет as color
+            SELECT 'Изделие' as item_type, и.id as item_id, и.наименование as item_name,
+                   сн.количество_штук as quantity, NULL as color, и.артикул as sku
             FROM набор н
             INNER JOIN состав_набора сн ON сн.id_набора = н.id
-            INNER JOIN деталь д ON д.id = сн.id_детали
-            INNER JOIN классификатор кл ON кл.id = д.id_классификатора
+            INNER JOIN изделие и ON и.id = сн.id_детали
             WHERE н.id = :set_id
             UNION ALL
-            SELECT 'Мини-фигурка' as item_type, кл.название as item_name, фвн.количество_штук as quantity, NULL as color
+            SELECT 'Мини-фигурка' as item_type, мф.id as item_id, кл.название as item_name,
+                   фвн.количество_штук as quantity, NULL as color, мф.уникальный_код as sku
             FROM набор н
             INNER JOIN фигурки_в_наборе фвн ON фвн.id_набора = н.id
             INNER JOIN мини_фигурка мф ON мф.id = фвн.id_фигурки
@@ -312,6 +312,28 @@ class LegoClassifier:
         """)
         result = db.execute(sql, {"set_id": set_id})
         return [dict(row._mapping) for row in result]
+
+    def add_set_product_item(self, db: Session, set_id: int, product_id: int, quantity: int) -> Dict[str, Any]:
+        if quantity <= 0:
+            return {"success": False, "message": "Количество должно быть больше 0"}
+        if not db.query(Set).filter(Set.id == set_id).first():
+            return {"success": False, "message": "Набор не найден"}
+        if not db.query(Product).filter(Product.id == product_id).first():
+            return {"success": False, "message": "Изделие не найдено"}
+        item = db.query(SetPart).filter(SetPart.id_набора == set_id, SetPart.id_детали == product_id).first()
+        if item:
+            item.количество_штук = quantity
+        else:
+            db.add(SetPart(id_набора=set_id, id_детали=product_id, количество_штук=quantity))
+        db.commit()
+        return {"success": True, "message": "Позиция состава сохранена"}
+
+    def delete_set_product_item(self, db: Session, set_id: int, product_id: int) -> Dict[str, Any]:
+        deleted = db.query(SetPart).filter(SetPart.id_набора == set_id, SetPart.id_детали == product_id).delete()
+        db.commit()
+        if not deleted:
+            return {"success": False, "message": "Позиция состава не найдена"}
+        return {"success": True, "message": "Позиция состава удалена"}
     
     def search_by_theme(self, db: Session, theme_name: str) -> List[Dict[str, Any]]:
         """Поиск по тематике"""
@@ -345,8 +367,7 @@ class LegoClassifier:
     def search_by_part_type(self, db: Session, type_name: str) -> List[Dict[str, Any]]:
         """Поиск по типу детали"""
         sql = text("""
-            SELECT кл.название as part_name, д.цвет as color, д.размер as size,
-                тип_кл.название as type_name, д.вес as weight
+            SELECT кл.название as part_name, тип_кл.название as type_name
             FROM деталь д
             JOIN классификатор кл ON кл.id = д.id_классификатора
             JOIN тип_детали тд ON тд.id = д.id_типа
@@ -392,12 +413,10 @@ class LegoClassifier:
         color: Optional[str] = None,
         name_contains: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
-        """Фильтр деталей по жёстким полям (тип, цвет, название)."""
+        """Фильтр деталей по типу и названию. Цвет/размер/вес задаются параметрами изделий."""
         q = self._parts_query(db)
         if part_type_id is not None:
             q = q.filter(Part.id_типа == part_type_id)
-        if color:
-            q = q.filter(Part.цвет == color)
         q = q.join(Classificator, Classificator.id == Part.id_классификатора)
         if name_contains:
             q = q.filter(Classificator.название.ilike(f"%{name_contains.strip()}%"))
@@ -1247,102 +1266,108 @@ class LegoClassifier:
         age_14 = db.query(AgeCategory).filter(AgeCategory.минимальный_возраст == 14).first()
         age_6 = db.query(AgeCategory).filter(AgeCategory.минимальный_возраст == 6).first()
 
-                # ========== ПАРАМЕТРЫ И СПРАВОЧНИК ИЗДЕЛИЙ (ЗАДАНИЕ 1.3) ==========
-        print("  Создаём параметры...")
-        
-        # Создаём параметры
+        # ========== ПЕРЕЧИСЛЕНИЯ ==========
+        print("  Добавляем тестовые перечисления...")
+        enum_part_type = self.add_enumeration(db, "Тип детали", "Типы деталей LEGO")
+        if enum_part_type["success"]:
+            enum_id = enum_part_type["enum_id"]
+            self.add_enum_value(db, enum_id, "Кирпич", 1)
+            self.add_enum_value(db, enum_id, "Плита", 2)
+            self.add_enum_value(db, enum_id, "Техническая", 3)
+            self.add_enum_value(db, enum_id, "Специальная", 4)
+
+        enum_color_result = self.add_enumeration(db, "Цвет", "Цвета изделий LEGO")
+        color_values = {}
+        if enum_color_result["success"]:
+            enum_color_id = enum_color_result["enum_id"]
+            for order, value in enumerate(["Красный", "Синий", "Зелёный", "Белый", "Чёрный", "Жёлтый", "Серый"], start=1):
+                created = self.add_enum_value(db, enum_color_id, value, order)
+                if created["success"]:
+                    color_values[value] = created["value_id"]
+        else:
+            enum_color_id = None
+
+        enum_rarity = self.add_enumeration(db, "Редкость", "Редкость мини-фигурок")
+        if enum_rarity["success"]:
+            enum_id = enum_rarity["enum_id"]
+            self.add_enum_value(db, enum_id, "Common", 1)
+            self.add_enum_value(db, enum_id, "Rare", 2)
+            self.add_enum_value(db, enum_id, "Exclusive", 3)
+
+        db.commit()
+        print("  Тестовые перечисления добавлены")
+
+        # ========== ПАРАМЕТРЫ И СПРАВОЧНИК ИЗДЕЛИЙ (ЗАДАНИЕ 1.3) ==========
+        print("  Создаём параметры и изделия...")
         params = {}
-        
-        # Параметр "вес" (REAL)
-        result = self.add_parameter(db, "вес", "Вес изделия", "REAL", "кг")
-        if result["success"]:
-            params["вес"] = result["param_id"]
-            print(f"    Создан параметр 'вес' (id={params['вес']})")
-        
-        # Параметр "длина" (REAL)
-        result = self.add_parameter(db, "длина", "Длина изделия", "REAL", "мм")
-        if result["success"]:
-            params["длина"] = result["param_id"]
-            print(f"    Создан параметр 'длина' (id={params['длина']})")
-        
-        # Параметр "цвет" (ENUM) — ссылается на существующее перечисление "Цвет детали"
-        enum_color = db.query(Enumeration).filter(Enumeration.name == "Цвет детали").first()
-        if enum_color:
-            result = self.add_parameter(db, "цвет", "Цвет изделия", "ENUM", перечисление_id=enum_color.id)
+        for code, full_name, param_type, unit, enum_id in [
+            ("вес", "Вес изделия", "REAL", "г", None),
+            ("длина", "Длина изделия", "REAL", "мм", None),
+            ("ширина", "Ширина изделия", "REAL", "мм", None),
+            ("высота", "Высота изделия", "REAL", "мм", None),
+            ("цвет", "Цвет изделия", "ENUM", None, enum_color_id),
+            ("материал", "Материал изделия", "STRING", None, None),
+            ("дата_ввода", "Дата ввода в каталог", "DATETIME", None, None),
+        ]:
+            result = self.add_parameter(db, code, full_name, param_type, unit, enum_id)
             if result["success"]:
-                params["цвет"] = result["param_id"]
-                print(f"    Создан параметр 'цвет' (id={params['цвет']})")
-        
-        # Параметр "материал" (STRING)
-        result = self.add_parameter(db, "материал", "Материал изделия", "STRING")
-        if result["success"]:
-            params["материал"] = result["param_id"]
-            print(f"    Создан параметр 'материал' (id={params['материал']})")
-        
-        # Привязываем параметры к классу "Кирпич 2x4"
-        brick_2x4 = db.query(Classificator).filter(Classificator.название == "Кирпич 2x4").first()
-        if brick_2x4:
-            print(f"  Привязываем параметры к классу 'Кирпич 2x4' (id={brick_2x4.id})...")
-            
-            if "вес" in params:
-                self.add_param_to_class(db, brick_2x4.id, params["вес"], мин_значение=0, макс_значение=10)
-            if "длина" in params:
-                self.add_param_to_class(db, brick_2x4.id, params["длина"], мин_значение=0, макс_значение=100)
-            if "цвет" in params:
-                self.add_param_to_class(db, brick_2x4.id, params["цвет"])
-            if "материал" in params:
-                self.add_param_to_class(db, brick_2x4.id, params["материал"])
-        
-        # Создаём тестовые изделия
-        print("  Создаём тестовые изделия...")
-        
-        if brick_2x4:
-            # Кирпич красный
-            product_red = self.add_product(db, brick_2x4.id, "Кирпич красный", "BR001")
-            # Кирпич синий
-            product_blue = self.add_product(db, brick_2x4.id, "Кирпич синий", "BR002")
-            
-            # Получаем параметры класса с их param_class_id
-            class_params = self.get_class_parameters(db, brick_2x4.id, include_inherited=False)
-            param_class_map = {cp["обозначение"]: cp["param_class_id"] for cp in class_params}
-            
-            # Получаем ID значений для цвета
-            red_val = None
-            blue_val = None
-            if enum_color:
-                red_val = db.query(EnumValue).filter(
-                    EnumValue.enumeration_id == enum_color.id,
-                    EnumValue.value == "Красный"
-                ).first()
-                blue_val = db.query(EnumValue).filter(
-                    EnumValue.enumeration_id == enum_color.id,
-                    EnumValue.value == "Синий"
-                ).first()
-            
-            # Устанавливаем значения для красного кирпича
-            if product_red["success"] and product_red["product_id"]:
-                pid = product_red["product_id"]
-                if "вес" in param_class_map:
-                    self.set_product_param_value(db, pid, param_class_map["вес"], 2.5)
-                if "длина" in param_class_map:
-                    self.set_product_param_value(db, pid, param_class_map["длина"], 50)
-                if "цвет" in param_class_map and red_val:
-                    self.set_product_param_value(db, pid, param_class_map["цвет"], red_val.id)
-                if "материал" in param_class_map:
-                    self.set_product_param_value(db, pid, param_class_map["материал"], "Пластик")
-            
-            # Устанавливаем значения для синего кирпича
-            if product_blue["success"] and product_blue["product_id"]:
-                pid = product_blue["product_id"]
-                if "вес" in param_class_map:
-                    self.set_product_param_value(db, pid, param_class_map["вес"], 2.5)
-                if "длина" in param_class_map:
-                    self.set_product_param_value(db, pid, param_class_map["длина"], 50)
-                if "цвет" in param_class_map and blue_val:
-                    self.set_product_param_value(db, pid, param_class_map["цвет"], blue_val.id)
-                if "материал" in param_class_map:
-                    self.set_product_param_value(db, pid, param_class_map["материал"], "Пластик")
-        
+                params[code] = result["param_id"]
+
+        class_specs = {
+            brick_2x4_id: {
+                "params": [("вес", 0, 20, "3.0"), ("длина", 0, 100, "31.8"), ("ширина", 0, 100, "15.8"), ("высота", 0, 100, "9.6"), ("цвет", None, None, None), ("материал", None, None, "ABS-пластик")],
+                "products": [
+                    ("Кирпич 2x4", "BR-2X4-RED", {"вес": 3.5, "длина": 31.8, "ширина": 15.8, "высота": 9.6, "цвет": "Красный", "материал": "ABS-пластик"}),
+                    ("Кирпич 2x4", "BR-2X4-BLU", {"вес": 2.5, "длина": 31.8, "ширина": 15.8, "высота": 9.6, "цвет": "Синий", "материал": "ABS-пластик"}),
+                    ("Кирпич 2x4", "BR-2X4-YEL", {"вес": 3.1, "длина": 31.8, "ширина": 15.8, "высота": 9.6, "цвет": "Жёлтый", "материал": "ABS-пластик"}),
+                ],
+            },
+            brick_2x2_id: {
+                "params": [("вес", 0, 20, "1.5"), ("длина", 0, 100, "15.8"), ("ширина", 0, 100, "15.8"), ("высота", 0, 100, "9.6"), ("цвет", None, None, None), ("материал", None, None, "ABS-пластик")],
+                "products": [
+                    ("Кирпич 2x2", "BR-2X2-GRN", {"вес": 1.2, "длина": 15.8, "ширина": 15.8, "высота": 9.6, "цвет": "Зелёный", "материал": "ABS-пластик"}),
+                    ("Кирпич 2x2", "BR-2X2-BLK", {"вес": 1.4, "длина": 15.8, "ширина": 15.8, "высота": 9.6, "цвет": "Чёрный", "материал": "ABS-пластик"}),
+                ],
+            },
+            plate_1x2_id: {
+                "params": [("вес", 0, 10, "0.8"), ("длина", 0, 100, "15.8"), ("ширина", 0, 100, "7.8"), ("высота", 0, 100, "3.2"), ("цвет", None, None, None), ("материал", None, None, "ABS-пластик")],
+                "products": [
+                    ("Плита 1x2", "PL-1X2-WHT", {"вес": 0.8, "длина": 15.8, "ширина": 7.8, "высота": 3.2, "цвет": "Белый", "материал": "ABS-пластик"}),
+                    ("Плита 1x2", "PL-1X2-GRY", {"вес": 0.9, "длина": 15.8, "ширина": 7.8, "высота": 3.2, "цвет": "Серый", "материал": "ABS-пластик"}),
+                ],
+            },
+            wheel_id: {
+                "params": [("вес", 0, 50, "5.0"), ("диаметр", 0, 100, "30"), ("ширина", 0, 100, "14"), ("цвет", None, None, None), ("материал", None, None, "Резина")],
+                "products": [
+                    ("Колесо", "WH-30-BLK", {"вес": 5.0, "диаметр": 30, "ширина": 14, "цвет": "Чёрный", "материал": "Резина"}),
+                    ("Колесо", "WH-30-GRY", {"вес": 4.8, "диаметр": 30, "ширина": 14, "цвет": "Серый", "материал": "Резина"}),
+                ],
+            },
+        }
+        if "диаметр" not in params:
+            result = self.add_parameter(db, "диаметр", "Диаметр изделия", "REAL", "мм")
+            if result["success"]:
+                params["диаметр"] = result["param_id"]
+
+        product_ids = {}
+        for class_id, spec in class_specs.items():
+            for code, min_value, max_value, default_value in spec["params"]:
+                if code in params:
+                    self.add_param_to_class(db, class_id, params[code], min_value, max_value, default_value, обязательный=(code in {"вес", "цвет"}))
+            param_class_map = {cp["обозначение"]: cp["param_class_id"] for cp in self.get_class_parameters(db, class_id, include_inherited=False)}
+            for name, sku, values in spec["products"]:
+                product = self.add_product(db, class_id, name, sku)
+                if not product["success"] or not product["product_id"]:
+                    continue
+                product_ids[sku] = product["product_id"]
+                for code, value in values.items():
+                    if code not in param_class_map:
+                        continue
+                    if code == "цвет":
+                        value = color_values.get(value)
+                    if value is not None:
+                        self.set_product_param_value(db, product["product_id"], param_class_map[code], value)
+
         db.commit()
         print("  Параметры и изделия добавлены")
         
@@ -1352,12 +1377,11 @@ class LegoClassifier:
         self.add_set(db, "Полицейский участок", "60266", 2020, 129.99, 745, age_6.id, city_theme.id, sets_id)
         self.add_set(db, "Внедорожник", "42110", 2019, 199.99, 2573, age_14.id, technic_theme.id, sets_id)
         
-        # 11. Добавление деталей
-        self.add_part(db, "Кирпич 2x4 красный", "Красный", "2x4", 2.5, brick_type_id)
-        self.add_part(db, "Кирпич 2x4 синий", "Синий", "2x4", 2.5, brick_type_id)
-        self.add_part(db, "Кирпич 2x2 зелёный", "Зелёный", "2x2", 1.2, brick_type_id)
-        self.add_part(db, "Плита 1x2 белая", "Белый", "1x2", 0.8, plate_type_id)
-        self.add_part(db, "Колесо чёрное", "Чёрный", "30x14", 5.0, special_type_id)
+        # 11. Добавление типов деталей без жёстких характеристик
+        self.add_part(db, "Кирпич 2x4", brick_type_id)
+        self.add_part(db, "Кирпич 2x2", brick_type_id)
+        self.add_part(db, "Плита 1x2", plate_type_id)
+        self.add_part(db, "Колесо", special_type_id)
         
         # 12. Добавление мини-фигурок
         self.add_minifigure(db, "Люк Скайуокер", "Люк", "Star Wars", "SW001")
@@ -1368,71 +1392,26 @@ class LegoClassifier:
         death_star = db.query(Set).join(Classificator).filter(Classificator.название == "Звезда Смерти").first()
         spaceship = db.query(Set).join(Classificator).filter(Classificator.название == "Космический корабль").first()
         
-        red_brick = db.query(Part).join(Classificator).filter(Classificator.название == "Кирпич 2x4 красный").first()
-        blue_brick = db.query(Part).join(Classificator).filter(Classificator.название == "Кирпич 2x4 синий").first()
-        green_brick = db.query(Part).join(Classificator).filter(Classificator.название == "Кирпич 2x2 зелёный").first()
-        white_plate = db.query(Part).join(Classificator).filter(Classificator.название == "Плита 1x2 белая").first()
-        wheel = db.query(Part).join(Classificator).filter(Classificator.название == "Колесо чёрное").first()
-        
         luke = db.query(Minifigure).filter(Minifigure.уникальный_код == "SW001").first()
         vader = db.query(Minifigure).filter(Minifigure.уникальный_код == "SW002").first()
         
         # Связи для Звезды Смерти
-        db.add(SetPart(id_набора=death_star.id, id_детали=red_brick.id, количество_штук=50))
-        db.add(SetPart(id_набора=death_star.id, id_детали=blue_brick.id, количество_штук=30))
-        db.add(SetPart(id_набора=death_star.id, id_детали=green_brick.id, количество_штук=40))
-        db.add(SetPart(id_набора=death_star.id, id_детали=white_plate.id, количество_штук=100))
+        db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["BR-2X4-RED"], количество_штук=50))
+        db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["BR-2X4-BLU"], количество_штук=30))
+        db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["BR-2X2-GRN"], количество_штук=40))
+        db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["PL-1X2-WHT"], количество_штук=100))
         
         db.add(SetMinifigure(id_набора=death_star.id, id_фигурки=luke.id, количество_штук=2))
         db.add(SetMinifigure(id_набора=death_star.id, id_фигурки=vader.id, количество_штук=1))
         
         # Связи для Космического корабля
-        db.add(SetPart(id_набора=spaceship.id, id_детали=red_brick.id, количество_штук=20))
-        db.add(SetPart(id_набора=spaceship.id, id_детали=green_brick.id, количество_штук=15))
-        db.add(SetPart(id_набора=spaceship.id, id_детали=wheel.id, количество_штук=4))
+        db.add(SetPart(id_набора=spaceship.id, id_детали=product_ids["BR-2X4-YEL"], количество_штук=20))
+        db.add(SetPart(id_набора=spaceship.id, id_детали=product_ids["BR-2X2-GRN"], количество_штук=15))
+        db.add(SetPart(id_набора=spaceship.id, id_детали=product_ids["WH-30-BLK"], количество_штук=4))
         
         db.add(SetMinifigure(id_набора=spaceship.id, id_фигурки=luke.id, количество_штук=1))
         
         db.commit()
-
-        # ========== ПЕРЕЧИСЛЕНИЯ ==========
-        print("  Добавляем тестовые перечисления...")
-        
-        # Перечисление "Тип детали"
-        enum_part_type = self.add_enumeration(db, "Тип детали", "Типы деталей LEGO")
-        if enum_part_type["success"]:
-            enum_id = enum_part_type["enum_id"]
-            self.add_enum_value(db, enum_id, "Кирпич", 1)
-            self.add_enum_value(db, enum_id, "Плита", 2)
-            self.add_enum_value(db, enum_id, "Техническая", 3)
-            self.add_enum_value(db, enum_id, "Специальная", 4)
-        else:
-            print(f"    Ошибка: {enum_part_type['message']}")
-        
-        # Перечисление "Цвет детали"
-        enum_color = self.add_enumeration(db, "Цвет детали", "Цвета деталей LEGO")
-        if enum_color["success"]:
-            enum_id = enum_color["enum_id"]
-            self.add_enum_value(db, enum_id, "Красный", 1)
-            self.add_enum_value(db, enum_id, "Синий", 2)
-            self.add_enum_value(db, enum_id, "Зелёный", 3)
-            self.add_enum_value(db, enum_id, "Белый", 4)
-            self.add_enum_value(db, enum_id, "Чёрный", 5)
-        else:
-            print(f"    Ошибка: {enum_color['message']}")
-        
-        # Перечисление "Редкость мини-фигурки"
-        enum_rarity = self.add_enumeration(db, "Редкость", "Редкость мини-фигурок")
-        if enum_rarity["success"]:
-            enum_id = enum_rarity["enum_id"]
-            self.add_enum_value(db, enum_id, "Common", 1)
-            self.add_enum_value(db, enum_id, "Rare", 2)
-            self.add_enum_value(db, enum_id, "Exclusive", 3)
-        else:
-            print(f"    Ошибка: {enum_rarity['message']}")
-        
-        db.commit()
-        print("  Тестовые перечисления добавлены")
 
         # ========== ХОЗЯЙСТВЕННЫЕ ОПЕРАЦИИ (ЗАДАНИЕ 1.4) ==========
         print("  Добавляем тестовые данные для ХО...")
@@ -1481,8 +1460,8 @@ class LegoClassifier:
 
                 # Добавляем позиции (товары)
                 # Получаем существующие изделия (кирпичи)
-                brick_red = db.query(Product).filter(Product.артикул == "BR001").first()
-                brick_blue = db.query(Product).filter(Product.артикул == "BR002").first()
+                brick_red = db.query(Product).filter(Product.артикул == "BR-2X4-RED").first()
+                brick_blue = db.query(Product).filter(Product.артикул == "BR-2X4-BLU").first()
                 if brick_red:
                     self.add_ho_item(db, op_id, brick_red.id, 100, 50.0)
                 if brick_blue:
@@ -1501,7 +1480,7 @@ class LegoClassifier:
                     self.assign_actor_to_role(db, op_id, role_map["Получатель"], subjects["Склад №1"])
 
                 # Добавляем позицию
-                brick_red = db.query(Product).filter(Product.артикул == "BR001").first()
+                brick_red = db.query(Product).filter(Product.артикул == "BR-2X4-RED").first()
                 if brick_red:
                     self.add_ho_item(db, op_id, brick_red.id, 200, 48.0)
 
@@ -2076,8 +2055,7 @@ class LegoClassifier:
                             "id": p["id"],
                             "name": p["name"],
                             "type": "part",
-                            "color": p["color"],
-                            "weight": p["weight"]
+                            "part_type": p.get("type_name")
                         })
             
             # Добавляем мини-фигурки

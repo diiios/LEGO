@@ -97,7 +97,6 @@ class Part(Base):
     # Relationships
     classificator = relationship("Classificator", back_populates="part")
     part_type = relationship("PartType", back_populates="parts")
-    sets = relationship("SetPart", back_populates="part")
 
 
 class Minifigure(Base):
@@ -118,12 +117,12 @@ class SetPart(Base):
     __tablename__ = "состав_набора"
     
     id_набора = Column(Integer, ForeignKey("набор.id", ondelete="CASCADE"), primary_key=True)
-    id_детали = Column(Integer, ForeignKey("деталь.id", ondelete="CASCADE"), primary_key=True)
+    id_детали = Column(Integer, ForeignKey("изделие.id", ondelete="CASCADE"), primary_key=True)
     количество_штук = Column(Integer)
     
     # Relationships
     set = relationship("Set", back_populates="parts")
-    part = relationship("Part", back_populates="sets")
+    product = relationship("Product")
 
 
 class SetMinifigure(Base):

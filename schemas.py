@@ -62,17 +62,11 @@ class SetResponse(BaseModel):
 # Part schemas
 class PartCreate(BaseModel):
     name: str
-    color: str
-    size: str
-    weight: float
     part_type_id: int
 
 class PartResponse(BaseModel):
     id: int
     name: str
-    color: str
-    size: str
-    weight: float
     part_type_id: int
     type_name: Optional[str] = None
     
@@ -80,9 +74,8 @@ class PartResponse(BaseModel):
         from_attributes = True
 
 class PartFilter(BaseModel):
-    """Фильтр деталей по жёстким полям (без параметров изделия)."""
+    """Фильтр деталей по типу и названию. Характеристики задаются параметрами изделия."""
     part_type_id: Optional[int] = None
-    color: Optional[str] = None
     name_contains: Optional[str] = None
 
 # Minifigure schemas
@@ -167,10 +160,7 @@ class AgeSearchResult(BaseModel):
 
 class PartSearchResult(BaseModel):
     part_name: str
-    color: str
-    size: str
     type_name: str
-    weight: float
 
 # Set contents
 class SetContent(BaseModel):
@@ -178,6 +168,10 @@ class SetContent(BaseModel):
     item_name: str
     quantity: int
     color: Optional[str] = None
+
+class SetProductItemCreate(BaseModel):
+    product_id: int
+    quantity: int
 
 
 # Enumeration schemas

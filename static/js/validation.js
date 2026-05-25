@@ -97,7 +97,7 @@ const V = {
         const n = Number(v);
         const y = new Date().getFullYear();
         if (Number.isNaN(n) || !Number.isInteger(n)) return { fieldId, message: `${label}: целый год` };
-        if (n < 1950 || n > y + 2) return { fieldId, message: `${label}: от 1950 до ${y + 2}` };
+        if (n < 1950 || n > y) return { fieldId, message: `${label}: от 1950 до ${y}` };
         return null;
     },
     rangeMinMax(minId, maxId, labels = ['Минимум', 'Максимум']) {

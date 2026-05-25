@@ -1,7 +1,7 @@
 # main.py
 from fastapi import FastAPI, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from typing import List, Optional, Dict, Any
 
@@ -75,6 +75,36 @@ classifier = LegoClassifier(engine)
 @app.on_event("startup")
 async def startup_event():
     Base.metadata.create_all(bind=engine)
+    with engine.begin() as conn:
+        conn.execute(text("""
+            DO $$
+            DECLARE r record;
+            BEGIN
+                FOR r IN
+                    SELECT conname
+                    FROM pg_constraint
+                    WHERE conrelid = 'состав_набора'::regclass
+                      AND contype = 'f'
+                      AND pg_get_constraintdef(oid) LIKE '%REFERENCES "%деталь"%'
+                LOOP
+                    EXECUTE format('ALTER TABLE "состав_набора" DROP CONSTRAINT %I', r.conname);
+                END LOOP;
+                DELETE FROM "состав_набора" сн
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM "изделие" и WHERE и.id = сн."id_детали"
+                );
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conrelid = 'состав_набора'::regclass
+                      AND contype = 'f'
+                      AND pg_get_constraintdef(oid) LIKE '%REFERENCES "%изделие"%'
+                ) THEN
+                    ALTER TABLE "состав_набора"
+                    ADD CONSTRAINT "состав_набора_id_детали_fkey"
+                    FOREIGN KEY ("id_детали") REFERENCES "изделие"(id) ON DELETE CASCADE;
+                END IF;
+            END $$;
+        """))
     """Инициализация при запуске"""
     print("Запуск Lego Classifier API на PostgreSQL...")
     # Загружаем тестовые данные если база пуста
@@ -217,6 +247,22 @@ def get_set_contents(set_id: int, db: Session = Depends(get_db)):
     """Получить состав набора"""
     return classifier.get_set_contents(db, set_id)
 
+@app.post("/sets/{set_id}/contents", tags=["🧩 Наборы"], response_model=OperationResult)
+def add_set_content_item(set_id: int, data: SetProductItemCreate, db: Session = Depends(get_db)):
+    """Добавить или обновить изделие в составе набора"""
+    result = classifier.add_set_product_item(db, set_id, data.product_id, data.quantity)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
+
+@app.delete("/sets/{set_id}/contents/{product_id}", tags=["🧩 Наборы"], response_model=OperationResult)
+def delete_set_content_item(set_id: int, product_id: int, db: Session = Depends(get_db)):
+    """Удалить изделие из состава набора"""
+    result = classifier.delete_set_product_item(db, set_id, product_id)
+    if not result["success"]:
+        raise HTTPException(status_code=404, detail=result["message"])
+    return result
+
 # ==================== PARTS ====================
 
 @app.get("/parts", tags=["🔧 Детали"], response_model=List[Dict[str, Any]])
@@ -226,11 +272,10 @@ def get_all_parts(db: Session = Depends(get_db)):
 
 @app.post("/parts/filter", tags=["🔧 Детали"], response_model=List[Dict[str, Any]])
 def filter_parts(data: PartFilter, db: Session = Depends(get_db)):
-    """Фильтр деталей по типу, цвету и названию"""
+    """Фильтр деталей по типу и названию"""
     return classifier.filter_parts(
         db,
         part_type_id=data.part_type_id,
-        color=data.color,
         name_contains=data.name_contains,
     )
 
@@ -242,7 +287,7 @@ def cleanup_anomalous_parts(db: Session = Depends(get_db)):
 @app.post("/parts", tags=["🔧 Детали"], response_model=OperationResult)
 def create_part(data: PartCreate, db: Session = Depends(get_db)):
     """Создать деталь"""
-    result = classifier.add_part(db, data.name, data.color, data.size, data.weight, data.part_type_id)
+    result = classifier.add_part(db, data.name, data.part_type_id)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
@@ -261,13 +306,8 @@ def update_part(part_id: int, data: PartCreate, db: Session = Depends(get_db)):
     part = db.query(Part).filter(Part.id == part_id).first()
     if not part:
         raise HTTPException(status_code=404, detail="Деталь не найдена")
-    if data.weight < 0 or data.weight > 500:
-        raise HTTPException(status_code=400, detail="Вес детали должен быть от 0 до 500 г")
     try:
         part.classificator.название = data.name
-        part.цвет = data.color
-        part.размер = data.size
-        part.вес = data.weight
         part.id_типа = data.part_type_id
         db.commit()
         return {"success": True, "message": "Деталь обновлена"}
@@ -850,7 +890,10 @@ def delete_part(part_id: int, db: Session = Depends(get_db)):
     if not part:
         raise HTTPException(status_code=404, detail="Деталь не найдена")
     try:
+        node = part.classificator
         db.delete(part)
+        if node:
+            db.delete(node)
         db.commit()
         return {"success": True, "message": "Деталь удалена"}
     except Exception as e:

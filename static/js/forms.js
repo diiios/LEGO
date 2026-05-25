@@ -15,7 +15,7 @@ async function loadEnumerationsList() {
 async function loadColorOptions() {
     if (REF_CACHE.colors) return REF_CACHE.colors;
     const enums = await loadEnumerationsList();
-    const colorEnum = enums.find(e => e.name === 'Цвет детали');
+    const colorEnum = enums.find(e => e.name === 'Цвет') || enums.find(e => e.name === 'Цвет детали');
     if (!colorEnum) {
         REF_CACHE.colors = [];
         return REF_CACHE.colors;

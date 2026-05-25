@@ -98,14 +98,15 @@ async function loadClassifier() {
 
 function setsFilterHtml() {
     const themeOpts = buildSelectOptions(cacheThemes, 'id', 'name', '— любая тематика —');
+    const currentYear = new Date().getFullYear();
     return `
         <div class="filter-panel">
             <div class="filter-title"><i class="fas fa-filter"></i> Фильтры наборов</div>
             <div class="filter-grid">
                 <div class="form-field"><label class="form-label" for="fTheme">Тематика</label><select class="form-select" id="fTheme">${themeOpts}</select></div>
                 <div class="form-field"><label class="form-label" for="fAge">Возраст ребёнка (лет)</label><input type="number" class="form-control" id="fAge" min="0" max="99" placeholder="Напр. 8"></div>
-                <div class="form-field"><label class="form-label" for="fYearMin">Год выпуска от</label><input type="number" class="form-control" id="fYearMin" min="1950" placeholder="2010"></div>
-                <div class="form-field"><label class="form-label" for="fYearMax">Год выпуска до</label><input type="number" class="form-control" id="fYearMax" min="1950" placeholder="2024"></div>
+                <div class="form-field"><label class="form-label" for="fYearMin">Год выпуска от</label><input type="number" class="form-control" id="fYearMin" min="1950" max="${currentYear}" placeholder="2010"></div>
+                <div class="form-field"><label class="form-label" for="fYearMax">Год выпуска до</label><input type="number" class="form-control" id="fYearMax" min="1950" max="${currentYear}" placeholder="${currentYear}"></div>
                 <div class="form-field"><label class="form-label" for="fPriceMin">Цена от ($)</label><input type="number" class="form-control" id="fPriceMin" step="0.01" min="0"></div>
                 <div class="form-field"><label class="form-label" for="fPriceMax">Цена до ($)</label><input type="number" class="form-control" id="fPriceMax" step="0.01" min="0"></div>
                 <div class="form-field"><label class="form-label" for="fSetText">Поиск по названию</label><input type="text" class="form-control" id="fSetText" placeholder="Название или каталожный номер"></div>
@@ -275,7 +276,6 @@ async function loadParts() {
     try {
         if (!cachePartTypes.length) await preloadReferences();
         const partTypeOpts = buildSelectOptions(cachePartTypes, 'id', 'name', '— любой тип —');
-        const colorOpts = buildColorSelectOptions(true);
         document.getElementById('content').innerHTML = `
             <div class="page-header"><h1>Детали LEGO</h1><p class="subtitle">Поиск конструктивных элементов для наборов — не путать с товарами в «Изделиях»</p></div>
             ${entityInfoHtml('part')}
@@ -283,7 +283,6 @@ async function loadParts() {
                 <div class="filter-title"><i class="fas fa-filter"></i> Простой поиск по полям детали</div>
                 <div class="filter-grid">
                     <div class="form-field"><label class="form-label" for="fPartType">Тип детали</label><select class="form-select" id="fPartType">${partTypeOpts}</select></div>
-                    <div class="form-field"><label class="form-label" for="fPartColor">Цвет</label><select class="form-select" id="fPartColor">${colorOpts}</select></div>
                     <div class="form-field"><label class="form-label" for="fPartText">Название содержит</label><input type="text" class="form-control" id="fPartText" placeholder="Часть названия"></div>
                 </div>
                 <div class="filter-actions">
@@ -297,8 +296,8 @@ async function loadParts() {
 }
 
 function resetPartsFilters() {
-    ['fPartType', 'fPartColor', 'fPartText'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
-    ['fPartType', 'fPartColor', 'fPartText'].forEach(clearFieldError);
+    ['fPartType', 'fPartText'].forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    ['fPartType', 'fPartText'].forEach(clearFieldError);
     applyPartsFilters();
 }
 
@@ -308,24 +307,19 @@ async function applyPartsFilters() {
     try {
         const body = {};
         const typeId = getVal('fPartType');
-        const colorVal = getVal('fPartColor');
         const text = getVal('fPartText');
         if (typeId) body.part_type_id = parseInt(typeId, 10);
-        if (colorVal) body.color = colorVal;
         if (text) body.name_contains = text;
 
         let parts;
-        if (body.part_type_id && !body.color && !body.name_contains) {
+        if (body.part_type_id && !body.name_contains) {
             const selectedType = document.getElementById('fPartType')?.selectedOptions[0]?.text || '';
             const byType = await apiRequest(`/search/part-type?part_type=${encodeURIComponent(selectedType)}`);
             parts = byType.map(p => ({
                 name: p.part_name,
-                color: p.color,
-                size: p.size,
-                weight: p.weight,
                 type_name: p.type_name,
             }));
-        } else if (body.part_type_id || body.color || body.name_contains) {
+        } else if (body.part_type_id || body.name_contains) {
             parts = await apiRequest('/parts/filter', 'POST', body);
         } else {
             parts = await apiRequest('/parts');
@@ -334,9 +328,9 @@ async function applyPartsFilters() {
             resultsEl.innerHTML = `<div class="empty-state"><i class="fas fa-inbox d-block"></i><p>Детали не найдены</p></div>`;
             return;
         }
-        let html = `<p class="results-count">Найдено: <strong>${parts.length}</strong> · элементы для наборов</p><div class="table-responsive card-panel"><table class="data-table"><thead><tr><th>Название</th><th>Цвет</th><th>Размер</th><th>Вес, г</th><th>Тип детали</th></tr></thead><tbody>`;
+        let html = `<p class="results-count">Найдено: <strong>${parts.length}</strong> · элементы для наборов</p><div class="table-responsive card-panel"><table class="data-table"><thead><tr><th>Название</th><th>Тип детали</th></tr></thead><tbody>`;
         for (const p of parts) {
-            html += `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.color)}</td><td>${escapeHtml(p.size)}</td><td>${p.weight ?? '—'}</td><td>${escapeHtml(p.type_name || '—')}</td></tr>`;
+            html += `<tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(p.type_name || '—')}</td></tr>`;
         }
         html += `</tbody></table></div>`;
         resultsEl.innerHTML = html;

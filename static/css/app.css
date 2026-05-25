@@ -718,7 +718,7 @@ body {
 }
 
 .landing-card {
-    width: 280px;
+    max-width: 300px;
     padding: 2rem;
     background: var(--color-surface);
     border-radius: 12px;
