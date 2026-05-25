@@ -274,12 +274,6 @@ async function loadParts() {
     showLoading();
     try {
         if (!cachePartTypes.length) await preloadReferences();
-        try {
-            const cleanup = await apiRequest('/parts/cleanup-anomalies', 'POST');
-            if (cleanup.removed_count > 0) {
-                showToast(`Удалены ошибочные записи: ${cleanup.removed_names.join(', ')}`, 'info');
-            }
-        } catch (_) { /* очистка необязательна */ }
         const partTypeOpts = buildSelectOptions(cachePartTypes, 'id', 'name', '— любой тип —');
         const colorOpts = buildColorSelectOptions(true);
         document.getElementById('content').innerHTML = `
@@ -664,13 +658,13 @@ function resetProductsFilter() {
     document.getElementById('productsResults').innerHTML = '<div class="empty-state"><p>Выберите класс изделия и нажмите «Найти изделия».</p></div>';
 }
 
-function buildProductFilterPayload() {
+function buildProductFilterPayload(filters = productParamFilters) {
     const body = {};
     const classId = getVal('fProdClass');
     if (classId) body.class_ids = [parseInt(classId, 10)];
 
-    if (productParamFilters.length) {
-        body.param_filters = productParamFilters.map(({ param_code, operator, value, min, max }) => {
+    if (filters.length) {
+        body.param_filters = filters.map(({ param_code, operator, value, min, max }) => {
             const pf = { param_code, operator };
             if (value !== undefined) pf.value = value;
             if (min !== undefined) pf.min = min;
@@ -691,18 +685,29 @@ async function applyProductsFilter() {
     clearFieldError('fProdClass');
 
     const pendingCode = getVal('fProdParam');
-    if (pendingCode && !validateCurrentProductCondition()) return;
+    let activeFilters = [...productParamFilters];
+    if (pendingCode) {
+        if (!validateCurrentProductCondition()) return;
+        const pendingFilter = await buildPfFromBuilder();
+        if (pendingFilter) {
+            const duplicate = activeFilters.some(
+                f => f.param_code === pendingFilter.param_code && f.operator === pendingFilter.operator
+                    && f.value === pendingFilter.value && f.min === pendingFilter.min && f.max === pendingFilter.max
+            );
+            if (!duplicate) activeFilters.push(pendingFilter);
+        }
+    }
 
     const resultsEl = document.getElementById('productsResults');
     resultsEl.innerHTML = `<div class="loading-state"><div class="spinner"></div></div>`;
     try {
-        const body = buildProductFilterPayload();
+        const body = buildProductFilterPayload(activeFilters);
         let products = await apiRequest('/products/filter', 'POST', body);
         if (!products.length) {
             resultsEl.innerHTML = `<div class="empty-state"><p>Изделия не найдены. Измените условия.</p></div>`;
             return;
         }
-        const condCount = productParamFilters.length;
+        const condCount = activeFilters.length;
         let html = `<p class="results-count">Найдено: <strong>${products.length}</strong>`;
         if (condCount) html += ` · условий по параметрам: <strong>${condCount}</strong> (все должны выполняться)`;
         html += `</p><div class="table-responsive card-panel"><table class="data-table"><thead><tr><th>Наименование</th><th>Артикул</th><th>Класс</th><th></th></tr></thead><tbody>`;
@@ -724,85 +729,6 @@ async function showProductParamsUser(id) {
         for (const row of p) body += `<tr><td>${escapeHtml(row.полное_имя || row.обозначение)}</td><td>${row.значение ?? '—'}</td></tr>`;
         body += '</tbody></table>';
         showDynamicModal('Параметры изделия', body);
-    } catch (e) { showToast(e.message, 'error'); }
-}
-
-async function loadOperationsView() {
-    setActiveNav(document.querySelector('[data-page="operations"]'));
-    showLoading();
-    try {
-        const hoTypes = await apiRequest('/ho-types');
-        const typeOpts = buildSelectOptions(hoTypes, 'id', 'название');
-        document.getElementById('content').innerHTML = `
-            <div class="page-header"><h1>Хозяйственные операции</h1><p class="subtitle">Просмотр и фильтрация документов</p></div>
-            <div class="filter-panel">
-                <div class="filter-grid">
-                    <div class="form-field"><label class="form-label" for="fHoType">Тип операции</label><select class="form-select" id="fHoType">${typeOpts}</select></div>
-                    <div class="form-field"><label class="form-label" for="fHoDateFrom">Дата от</label><input type="date" class="form-control" id="fHoDateFrom"></div>
-                    <div class="form-field"><label class="form-label" for="fHoDateTo">Дата до</label><input type="date" class="form-control" id="fHoDateTo"></div>
-                    <div class="form-field"><label class="form-label" for="fHoSumMin">Сумма от ($)</label><input type="number" class="form-control" id="fHoSumMin" step="0.01" min="0"></div>
-                    <div class="form-field"><label class="form-label" for="fHoSumMax">Сумма до ($)</label><input type="number" class="form-control" id="fHoSumMax" step="0.01" min="0"></div>
-                </div>
-                <div class="filter-actions">
-                    <button class="btn-app btn-app-primary" onclick="applyHoFilter()"><i class="fas fa-search"></i> Применить</button>
-                </div>
-            </div>
-            <div id="hoResults"></div>`;
-        await applyHoFilter();
-    } catch (e) { showError(e.message); }
-}
-
-async function applyHoFilter() {
-    if (!validateFilterPanel(['fHoSumMin', 'fHoSumMax'], [
-        () => V.rangeMinMax('fHoSumMin', 'fHoSumMax', ['Сумма от', 'Сумма до']),
-    ])) return;
-
-    const el = document.getElementById('hoResults');
-    el.innerHTML = `<div class="loading-state"><div class="spinner"></div></div>`;
-    try {
-        const body = {};
-        const typeId = document.getElementById('fHoType')?.value;
-        if (typeId) body.тип_хо_id = parseInt(typeId, 10);
-        const df = document.getElementById('fHoDateFrom')?.value;
-        const dt = document.getElementById('fHoDateTo')?.value;
-        if (df) body.дата_от = new Date(df).toISOString();
-        if (dt) body.дата_до = new Date(dt + 'T23:59:59').toISOString();
-        const smin = document.getElementById('fHoSumMin')?.value;
-        const smax = document.getElementById('fHoSumMax')?.value;
-        if (smin) body.сумма_мин = parseFloat(smin);
-        if (smax) body.сумма_макс = parseFloat(smax);
-
-        const ops = Object.keys(body).length
-            ? await apiRequest('/ho-operations/filter', 'POST', body)
-            : await apiRequest('/ho-operations');
-
-        if (!ops.length) {
-            el.innerHTML = `<div class="empty-state"><p>Операции не найдены</p></div>`;
-            return;
-        }
-        let html = `<p class="results-count">Найдено: <strong>${ops.length}</strong></p><div class="table-responsive card-panel"><table class="data-table"><thead><tr><th>Номер</th><th>Дата</th><th>Сумма</th><th></th></tr></thead><tbody>`;
-        for (const o of ops) {
-            const num = o.номер_документа || o.номер;
-            html += `<tr><td><code>${escapeHtml(num)}</code></td><td>${formatDate(o.дата)}</td><td>${formatPrice(o.сумма)}</td>
-                <td><button class="btn-app btn-app-sm btn-app-outline" onclick="showHoDetailsUser(${o.id})"><i class="fas fa-eye"></i></button></td></tr>`;
-        }
-        html += `</tbody></table></div>`;
-        el.innerHTML = html;
-    } catch (e) {
-        el.innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`;
-    }
-}
-
-async function showHoDetailsUser(opId) {
-    try {
-        const d = await apiRequest(`/ho-operations/${opId}`);
-        let body = `<p><strong>Номер:</strong> ${escapeHtml(d.номер_документа)}</p><p><strong>Сумма:</strong> ${formatPrice(d.сумма)}</p>`;
-        body += '<h6>Роли</h6><ul>';
-        for (const r of d.роли || []) body += `<li>${escapeHtml(r.роль)}: ${escapeHtml(r.субъект || '—')}</li>`;
-        body += '</ul><h6>Позиции</h6><ul>';
-        for (const i of d.позиции || []) body += `<li>${escapeHtml(i.изделие)} — ${i.количество} × ${formatPrice(i.цена)}</li>`;
-        body += '</ul>';
-        showDynamicModal('Операция', body);
     } catch (e) { showToast(e.message, 'error'); }
 }
 

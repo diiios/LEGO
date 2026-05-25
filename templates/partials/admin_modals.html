@@ -109,36 +109,6 @@
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createProduct()">Создать изделие</button></div>
 </div></div></div>
 
-<div class="modal fade modal-app" id="createHOTypeModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Создание типа ХО</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body">
-        <div class="form-field mb-3"><label class="form-label" for="hoTypeName">Название *</label><input type="text" class="form-control" id="hoTypeName"></div>
-        <div class="form-field"><label class="form-label" for="hoTypeParent">Родительский тип</label><select class="form-select" id="hoTypeParent"></select></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createHOType()">Создать</button></div>
-</div></div></div>
-
-<div class="modal fade modal-app" id="createSubjectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Создание субъекта</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body">
-        <div class="form-field mb-3"><label class="form-label" for="subjectName">Наименование *</label><input type="text" class="form-control" id="subjectName"></div>
-        <div class="form-field mb-3"><label class="form-label" for="subjectInn">ИНН</label><input type="text" class="form-control" id="subjectInn" maxlength="12"></div>
-        <div class="form-field mb-3"><label class="form-label" for="subjectContact">Контактное лицо</label><input type="text" class="form-control" id="subjectContact"></div>
-        <div class="form-field"><label class="form-label" for="subjectPhone">Телефон</label><input type="tel" class="form-control" id="subjectPhone"></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createSubject()">Создать</button></div>
-</div></div></div>
-
-<div class="modal fade modal-app" id="createHOOperationModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Создание операции</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body">
-        <div class="form-field mb-3"><label class="form-label" for="hoOpTypeId">Тип операции *</label><select class="form-select" id="hoOpTypeId"></select></div>
-        <div class="form-field mb-3"><label class="form-label" for="hoOpNumber">Номер документа *</label><input type="text" class="form-control" id="hoOpNumber"></div>
-        <div class="form-field"><label class="form-label" for="hoOpDate">Дата и время</label><input type="datetime-local" class="form-control" id="hoOpDate"></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createHOOperation()">Создать</button></div>
-</div></div></div>
-
 <!-- Редактирование -->
 <div class="modal fade modal-app" id="editCategoryModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Редактирование категории</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -267,35 +237,6 @@
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateEnumValue()">Сохранить</button></div>
 </div></div></div>
 
-<div class="modal fade modal-app" id="editSubjectModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Редактирование субъекта</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body"><input type="hidden" id="editSubjectId">
-        <div class="form-field mb-3"><label class="form-label" for="editSubjectName">Наименование *</label><input type="text" class="form-control" id="editSubjectName"></div>
-        <div class="form-field mb-3"><label class="form-label" for="editSubjectInn">ИНН</label><input type="text" class="form-control" id="editSubjectInn"></div>
-        <div class="form-field mb-3"><label class="form-label" for="editSubjectContact">Контактное лицо</label><input type="text" class="form-control" id="editSubjectContact"></div>
-        <div class="form-field"><label class="form-label" for="editSubjectPhone">Телефон</label><input type="tel" class="form-control" id="editSubjectPhone"></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateSubject()">Сохранить</button></div>
-</div></div></div>
-
-<div class="modal fade modal-app" id="editHOTypeModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Редактирование типа ХО</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body"><input type="hidden" id="editHOTypeId">
-        <div class="form-field mb-3"><label class="form-label" for="editHOTypeName">Название *</label><input type="text" class="form-control" id="editHOTypeName"></div>
-        <div class="form-field"><label class="form-label" for="editHOTypeParent">Родительский тип</label><select class="form-select" id="editHOTypeParent"></select></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateHOType()">Сохранить</button></div>
-</div></div></div>
-
-<div class="modal fade modal-app" id="editHORoleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Редактирование роли ХО</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body"><input type="hidden" id="editRoleId">
-        <div class="form-field mb-3"><label class="form-label" for="editRoleName">Название роли *</label><input type="text" class="form-control" id="editRoleName"></div>
-        <div class="form-field"><label class="form-label" for="editRoleClassId">Допустимый класс субъекта</label><select class="form-select" id="editRoleClassId"></select><div class="form-hint">Категория классификатора для контрагента в этой роли</div></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateHORole()">Сохранить</button></div>
-</div></div></div>
-
 <div class="modal fade modal-app" id="addEnumValueModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Добавить значение</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
     <div class="modal-body"><input type="hidden" id="currentEnumId">
@@ -303,13 +244,4 @@
         <div class="form-field"><label class="form-label" for="newEnumValueOrder">Порядок</label><input type="number" class="form-control" id="newEnumValueOrder" min="0"></div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="addEnumValue()">Добавить</button></div>
-</div></div></div>
-
-<div class="modal fade modal-app" id="addHORoleModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Добавить роль</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body"><input type="hidden" id="currentHOTypeId">
-        <div class="form-field mb-3"><label class="form-label" for="newRoleName">Название роли *</label><input type="text" class="form-control" id="newRoleName"></div>
-        <div class="form-field"><label class="form-label" for="newRoleClassId">Допустимый класс субъекта</label><select class="form-select" id="newRoleClassId"></select></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="addHORole()">Добавить</button></div>
 </div></div></div>

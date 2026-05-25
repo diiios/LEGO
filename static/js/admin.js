@@ -332,7 +332,7 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         function getProductIconEmoji(t){const i={'set':'🧩','part':'🔧','minifigure':'🧸'}; return i[t]||'📦';}
 
 function navigateAdmin(ev, fn) { if (ev?.preventDefault) ev.preventDefault(); if (ev?.currentTarget) setActiveNav(ev.currentTarget); fn(); }
-async function preloadAdminRefs() { try { adminCache.themes = await apiRequest("/themes"); adminCache.ages = await apiRequest("/age-categories"); adminCache.partTypes = await apiRequest("/part-types"); adminCache.hoTypes = await apiRequest("/ho-types"); adminCache.enums = await apiRequest("/enumerations"); } catch (_) {} }
+async function preloadAdminRefs() { try { adminCache.themes = await apiRequest("/themes"); adminCache.ages = await apiRequest("/age-categories"); adminCache.partTypes = await apiRequest("/part-types"); adminCache.enums = await apiRequest("/enumerations"); } catch (_) {} }
 async function fillSetSelects(prefix) { await preloadAdminRefs(); const age = document.getElementById(prefix + "AgeId"); const theme = document.getElementById(prefix + "ThemeId"); if (age) age.outerHTML = `<select class="form-select mb-2" id="${prefix}AgeId">${buildSelectOptions(adminCache.ages, "id", "name")}</select>`; if (theme) theme.outerHTML = `<select class="form-select mb-2" id="${prefix}ThemeId">${buildSelectOptions(adminCache.themes, "id", "name")}</select>`; }
 async function fillPartTypeSelect(prefix) { await preloadAdminRefs(); const el = document.getElementById(prefix + "TypeId"); if (el) el.outerHTML = `<select class="form-select" id="${prefix}TypeId">${buildSelectOptions(adminCache.partTypes, "id", "name")}</select>`; }
 document.addEventListener("DOMContentLoaded", () => {
