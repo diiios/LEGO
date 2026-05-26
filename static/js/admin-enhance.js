@@ -35,6 +35,10 @@ async function showMoveNodeModal(id) {
     openModal('moveCategoryModal');
 }
 
+function invalidateCategoriesCache() {
+    if (typeof REF_CACHE !== 'undefined') REF_CACHE.categories = null;
+}
+
 async function confirmMoveCategory() {
     const id = document.getElementById('moveCatId').value;
     const parentVal = document.getElementById('moveCatParentId').value;
@@ -241,10 +245,30 @@ async function showCreateSetModal() {
     document.getElementById('setThemeId').value = '';
     openModal('createSetModal');
 }
-
+async function fillPartTypeSelect(prefix) {
+    await preloadAdminRefs();
+    const el = document.getElementById(prefix + "TypeId");
+    if (el) {
+        const opts = buildSelectOptions(adminCache.partTypes, "id", "name", '— выберите тип —');
+        el.innerHTML = opts;   // используем innerHTML, а не outerHTML
+    } else {
+        console.warn(`Элемент ${prefix}TypeId не найден`);
+    }
+}
 async function showCreatePartModal() {
     await fillPartTypeSelect('part');
-    ['partName', 'partTypeId'].forEach(clearFieldError);
+    // Принудительно загружаем категории, игнорируя кэш
+    REF_CACHE.categories = null;
+    const cats = await loadCategoriesList();
+    console.log('Загружено категорий:', cats.length); // для отладки
+    const parentOpts = buildCategorySelectOptions(cats, '— без родителя —');
+    const parentSelect = document.getElementById('partParentId');
+    if (parentSelect) {
+        // Просто заменяем содержимое, а не outerHTML, чтобы сохранить элемент
+        parentSelect.innerHTML = parentOpts;
+    } else {
+        console.error('Селектор partParentId не найден в DOM');
+    }
     document.getElementById('partName').value = '';
     document.getElementById('partTypeId').value = '';
     openModal('createPartModal');
@@ -313,15 +337,37 @@ async function showEditParameterModal(id) {
 
 async function showEditPartModal(id) {
     try {
-        const p = await apiRequest(`/parts/${id}`);
-        await fillPartTypeSelect('editPart');
-        document.getElementById('editPartId').value = p.id;
-        document.getElementById('editPartName').value = p.name;
-        document.getElementById('editPartTypeId').value = p.part_type_id;
+        const part = await apiRequest(`/parts/${id}`);
         openModal('editPartModal');
-    } catch (e) { showToast(e.message, 'error'); }
-}
 
+        document.getElementById('editPartId').value = part.id;
+        document.getElementById('editPartName').value = part.name;
+
+        // Загружаем типы деталей
+        const types = await apiRequest('/part-types');
+        console.log('types:', types);  // посмотри в консоли что приходит
+        console.log('part.part_type_id:', part.part_type_id);
+        const typeSelect = document.getElementById('editPartTypeId');
+        typeSelect.innerHTML = '<option value="">— выберите тип —</option>'
+            + types.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
+        // Явно устанавливаем выбранное значение ПОСЛЕ innerHTML
+        if (part.part_type_id) {
+            typeSelect.value = String(part.part_type_id);
+        }
+
+        // Загружаем категории
+        const cats = await apiRequest('/categories');
+        const parentSelect = document.getElementById('editPartParentId');
+        parentSelect.innerHTML = '<option value="">— без родителя —</option>'
+            + cats.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.node_type}, ID: ${c.id})</option>`).join('');
+        if (part.parent_id) {
+            parentSelect.value = String(part.parent_id);
+        }
+
+    } catch(e) {
+        showToast(e.message, 'error');
+    }
+}
 async function showEditMinifigureModal(id) {
     try {
         const m = await apiRequest(`/minifigures/${id}`);
@@ -441,11 +487,15 @@ async function updateSet() {
 async function createPart() {
     if (!validatePartForm('part')) return;
     const data = {
-        name: getVal('partName'), part_type_id: parseInt(getVal('partTypeId'), 10),
+        name: getVal('partName'),
+        part_type_id: parseInt(getVal('partTypeId'), 10),
+        parent_id: getVal('partParentId') ? parseInt(getVal('partParentId'), 10) : null
     };
     try {
         await apiRequest('/parts', 'POST', data);
         showToast('Деталь создана');
+        invalidateCategoriesCache();      // ← добавить
+        invalidateClassParamsCache();     // ← добавить
         closeModal('createPartModal');
         loadParts();
     } catch (e) { showToast(e.message, 'error'); }
@@ -455,7 +505,9 @@ async function updatePart() {
     if (!validatePartForm('editPart')) return;
     const id = document.getElementById('editPartId').value;
     const data = {
-        name: getVal('editPartName'), part_type_id: parseInt(getVal('editPartTypeId'), 10),
+        name: getVal('editPartName'),
+        part_type_id: parseInt(getVal('editPartTypeId'), 10),
+        parent_id: getVal('editPartParentId') ? parseInt(getVal('editPartParentId'), 10) : null,
     };
     try {
         await apiRequest(`/parts/${id}`, 'PUT', data);
@@ -567,6 +619,7 @@ async function createProduct() {
             showToast(`Изделие создано${pr.saved ? `, параметров: ${pr.saved}` : ''}`, 'success');
         }
         invalidateClassParamsCache();
+        invalidateCategoriesCache();
         closeModal('createProductModal');
         applyAdminProductsFilter();
     } catch (e) { showToast(e.message, 'error'); }
@@ -783,6 +836,7 @@ async function reorderCategoryChildren() {
 async function loadClassParametersAdmin() {
     showLoading();
     try {
+        invalidateCategoriesCache();
         await Promise.all([loadCategoriesList(), preloadAdminRefs()]);
         classParamDefinitions = await apiRequest('/parameters');
         const classOpts = buildCategorySelectOptions(REF_CACHE.categories, '— выберите класс —');
@@ -996,17 +1050,37 @@ async function createPartType() {
 }
 
 async function updatePartType() {
+    const id = document.getElementById('editPartTypeId').value;
+    console.log('updatePartType id:', id);
+    if (!id) {
+        showToast('Ошибка: ID типа детали не определён', 'error');
+        return;
+    }
     if (!runValidation([
         () => V.text('editPartTypeName', 'Название'),
         () => V.positiveInt('editPartTypeLevel', 'Уровень иерархии', { min: 1, max: 10 }),
     ])) return;
-    const id = document.getElementById('editPartTypeId').value;
     try {
-        await apiRequest(`/part-types/${id}`, 'PUT', { name: getVal('editPartTypeName'), hierarchy_level: parseInt(getVal('editPartTypeLevel'), 10) });
+        await apiRequest(`/part-types/${id}`, 'PUT', {
+            name: getVal('editPartTypeName'),
+            hierarchy_level: parseInt(getVal('editPartTypeLevel'), 10)
+        });
         showToast('Тип детали обновлён');
         closeModal('editPartTypeModal');
         loadPartTypes();
     } catch (e) { showToast(e.message, 'error'); }
+}
+
+function showEditPartTypeModal(id, name, level) {
+    console.log('Received id:', id);   // для отладки
+    if (!id) {
+        showToast('Ошибка: ID типа детали не передан', 'error');
+        return;
+    }
+    document.getElementById('editPartTypeId').value = id;
+    document.getElementById('editPartTypeName').value = name;
+    document.getElementById('editPartTypeLevel').value = level;
+    new bootstrap.Modal(document.getElementById('editPartTypeModal')).show();
 }
 
 async function createEnumeration() {
@@ -1420,3 +1494,153 @@ async function addHoItemAdmin(opId) {
 document.addEventListener('DOMContentLoaded', () => {
     adminInitModals();
 });
+
+async function showCreateMinifigureModal() {
+    try {
+        const enums = await apiRequest('/enumerations');
+        const rarityEnum = enums.find(e => e.name === 'Редкость');
+        let rarityOpts = '<option value="">— не указана —</option>';
+        if (rarityEnum) {
+            const vals = await apiRequest(`/enumerations/${rarityEnum.id}/values`);
+            rarityOpts += vals.map(v => `<option value="${v.id}">${escapeHtml(v.value)}</option>`).join('');
+        }
+        const modal = document.getElementById('createMinifigureModal');
+        if (!modal) {
+            const newModal = document.createElement('div');
+            newModal.className = 'modal fade modal-app';
+            newModal.id = 'createMinifigureModal';
+            newModal.innerHTML = `<div class="modal-dialog"><div class="modal-content">
+                <div class="modal-header"><h5 class="modal-title">Создание мини-фигурки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+                <div class="modal-body">
+                    <div class="form-field mb-3"><label class="form-label" for="mfName">Название *</label><input type="text" class="form-control" id="mfName"></div>
+                    <div class="form-field mb-3"><label class="form-label" for="mfArticle">Артикул *</label><input type="text" class="form-control" id="mfArticle"></div>
+                    <div class="form-field"><label class="form-label" for="mfRarity">Редкость</label><select class="form-select" id="mfRarity">${rarityOpts}</select></div>
+                </div>
+                <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createMinifigure()">Создать</button></div>
+            </div></div>`;
+            document.body.appendChild(newModal);
+        } else {
+            const body = modal.querySelector('.modal-body');
+            if (body) body.innerHTML = `<div class="form-field mb-3"><label class="form-label" for="mfName">Название *</label><input type="text" class="form-control" id="mfName"></div>
+                <div class="form-field mb-3"><label class="form-label" for="mfArticle">Артикул *</label><input type="text" class="form-control" id="mfArticle"></div>
+                <div class="form-field"><label class="form-label" for="mfRarity">Редкость</label><select class="form-select" id="mfRarity">${rarityOpts}</select></div>`;
+        }
+        document.getElementById('mfName').value = '';
+        document.getElementById('mfArticle').value = '';
+        document.getElementById('mfRarity').value = '';
+        openModal('createMinifigureModal');
+    } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function createMinifigure() {
+    const name = document.getElementById('mfName').value.trim();
+    const sku = document.getElementById('mfArticle').value.trim();
+    const rarityId = document.getElementById('mfRarity').value;
+    if (!name || !sku) { showToast('Название и артикул обязательны', 'error'); return; }
+    try {
+        const cats = await apiRequest('/categories');
+        const mfClass = cats.find(c => c.name === 'Мини-фигурка');
+        if (!mfClass) throw new Error('Класс "Мини-фигурка" не найден');
+        const prod = await apiRequest('/products', 'POST', {
+            класс_id: mfClass.id,
+            наименование: name,
+            артикул: sku
+        });
+        if (prod.product_id && rarityId) {
+            const classParams = await apiRequest(`/classes/${mfClass.id}/parameters`);
+            const rarityParam = classParams.find(p => p.обозначение === 'редкость');
+            if (rarityParam) {
+                await apiRequest(`/products/${prod.product_id}/values`, 'POST', {
+                    param_class_id: rarityParam.param_class_id,
+                    value: parseInt(rarityId, 10)
+                });
+            }
+        }
+        showToast('Мини-фигурка создана');
+        closeModal('createMinifigureModal');
+        loadMinifigures();
+    } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function showEditMinifigureModal(id) {
+    try {
+        const prod = await apiRequest(`/products/${id}`);
+        const cats = await apiRequest('/categories');
+        const mfClass = cats.find(c => c.name === 'Мини-фигурка');
+        if (!mfClass) throw new Error('Класс не найден');
+        const params = await apiRequest(`/products/${id}/values`);
+        const rarityParam = params.find(p => p.обозначение === 'редкость');
+        const rarityVal = rarityParam?.raw_value || '';
+        // Загружаем перечисления для выбора редкости
+        const enums = await apiRequest('/enumerations');
+        const rarityEnum = enums.find(e => e.name === 'Редкость');
+        let rarityOpts = '<option value="">— не указана —</option>';
+        if (rarityEnum) {
+            const vals = await apiRequest(`/enumerations/${rarityEnum.id}/values`);
+            rarityOpts += vals.map(v => `<option value="${v.id}" ${rarityVal == v.id ? 'selected' : ''}>${escapeHtml(v.value)}</option>`).join('');
+        }
+        const modalBody = `
+            <input type="hidden" id="editProductId" value="${prod.id}">
+            <div class="form-field mb-3"><label class="form-label" for="editProductName">Название *</label><input type="text" class="form-control" id="editProductName" value="${escapeHtml(prod.наименование)}"></div>
+            <div class="form-field mb-3"><label class="form-label" for="editProductArticle">Артикул</label><input type="text" class="form-control" id="editProductArticle" value="${escapeHtml(prod.артикул || '')}"></div>
+            <div class="form-field"><label class="form-label" for="editRarity">Редкость</label><select class="form-select" id="editRarity">${rarityOpts}</select></div>
+        `;
+        const modal = document.createElement('div');
+        modal.className = 'modal fade modal-app';
+        modal.id = 'editMinifigureModalDynamic';
+        modal.innerHTML = `<div class="modal-dialog"><div class="modal-content">
+            <div class="modal-header"><h5 class="modal-title">Редактирование мини-фигурки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+            <div class="modal-body">${modalBody}</div>
+            <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateMinifigureDynamic()">Сохранить</button></div>
+        </div></div>`;
+        document.body.appendChild(modal);
+        openModal('editMinifigureModalDynamic');
+        modal.addEventListener('hidden.bs.modal', () => modal.remove());
+    } catch(e) { showToast(e.message, 'error'); }
+}
+
+async function updateMinifigureDynamic() {
+    const id = document.getElementById('editProductId').value;
+    const name = document.getElementById('editProductName').value.trim();
+    const sku = document.getElementById('editProductArticle').value.trim();
+    const rarityId = document.getElementById('editRarity').value;
+    if (!name) { showToast('Название обязательно', 'error'); return; }
+    try {
+        await apiRequest(`/products/${id}`, 'PUT', {
+            наименование: name,
+            артикул: sku || null,
+            класс_id: (await apiRequest('/categories')).find(c => c.name === 'Мини-фигурка').id
+        });
+        // Обновляем редкость
+        if (rarityId) {
+            const cats = await apiRequest('/categories');
+            const mfClass = cats.find(c => c.name === 'Мини-фигурка');
+            const classParams = await apiRequest(`/classes/${mfClass.id}/parameters`);
+            const rarityParam = classParams.find(p => p.обозначение === 'редкость');
+            if (rarityParam) {
+                // Проверяем, есть ли уже значение
+                const curVal = await apiRequest(`/products/${id}/values`);
+                const existing = curVal.find(p => p.param_class_id === rarityParam.param_class_id);
+                if (existing && existing.raw_value) {
+                    // обновляем
+                    await apiRequest(`/products/${id}/values`, 'POST', {
+                        param_class_id: rarityParam.param_class_id,
+                        value: parseInt(rarityId, 10)
+                    });
+                } else if (rarityId) {
+                    // создаём
+                    await apiRequest(`/products/${id}/values`, 'POST', {
+                        param_class_id: rarityParam.param_class_id,
+                        value: parseInt(rarityId, 10)
+                    });
+                } else if (!rarityId && existing && existing.raw_value) {
+                    // удаляем
+                    await apiRequest(`/products/${id}/values/${rarityParam.param_class_id}`, 'DELETE');
+                }
+            }
+        }
+        showToast('Мини-фигурка обновлена');
+        closeModal('editMinifigureModalDynamic');
+        loadMinifigures();
+    } catch(e) { showToast(e.message, 'error'); }
+}

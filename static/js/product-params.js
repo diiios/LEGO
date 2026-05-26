@@ -18,6 +18,10 @@ function invalidateClassParamsCache() {
     productParamsCache.classParams = {};
 }
 
+function invalidateCategoriesCache() {
+    if (typeof REF_CACHE !== 'undefined') REF_CACHE.categories = null;
+}
+
 async function fetchEnumValues(enumId) {
     if (!enumId) return [];
     const key = String(enumId);

@@ -180,6 +180,7 @@ class LegoClassifier:
             )
             SELECT id, название, тип_элемента, родительский_id
             FROM descendants WHERE тип_элемента IN ('терминальный', 'набор') ORDER BY название
+            WHERE тип_элемента IN ('терминальный', 'набор', 'мини_фигурка') ORDER BY название
         """)
         result = db.execute(sql, {"node_id": node_id})
         return [dict(row._mapping) for row in result]
@@ -245,24 +246,21 @@ class LegoClassifier:
             joinedload(Part.part_type).joinedload(PartType.classificator),
         )
 
-    def add_part(self, db: Session, name: str, part_type_id: int) -> Dict[str, Any]:
-        """Добавление детали"""
+    def add_part(self, db: Session, name: str, part_type_id: int, parent_id: Optional[int] = None) -> Dict[str, Any]:
+        """Добавление детали (узел в классификаторе)"""
+        # Проверяем, существует ли уже узел с таким именем
         existing_node = db.query(Classificator).filter(Classificator.название == name).first()
         if existing_node:
             if db.query(Part).filter(Part.id_классификатора == existing_node.id).first():
                 return {"success": False, "message": "Деталь с таким именем уже существует", "product_id": None}
             node_id = existing_node.id
         else:
-            node_result = self.add_node(db, name, "терминальный", None)
+            node_result = self.add_node(db, name, "терминальный", parent_id)   # <- передаём parent_id
             if not node_result["success"]:
                 return node_result
             node_id = node_result["node_id"]
-        
         try:
-            new_part = Part(
-                id_классификатора=node_id,
-                id_типа=part_type_id
-            )
+            new_part = Part(id_классификатора=node_id, id_типа=part_type_id)
             db.add(new_part)
             db.commit()
             db.refresh(new_part)
@@ -270,7 +268,7 @@ class LegoClassifier:
         except Exception as e:
             db.rollback()
             return {"success": False, "message": f"Ошибка: {str(e)}"}
-    
+        
     def add_minifigure(self, db: Session, name: str, character: str, series: str, unique_code: str) -> Dict[str, Any]:
         """Добавление мини-фигурки"""
         node_result = self.add_node(db, name, "терминальный", None)
@@ -544,8 +542,27 @@ class LegoClassifier:
         except Exception as e:
             db.rollback()
             return {"success": False, "message": f"Ошибка: {str(e)}"}
-    
-        # ========== ПЕРЕЧИСЛЕНИЯ (ЗАДАНИЕ 1.2) ==========
+    def update_part_type(self, db: Session, type_id: int, name: str, hierarchy_level: int) -> Dict[str, Any]:
+        """Обновить тип детали"""
+        part_type = db.query(PartType).filter(PartType.id == type_id).first()
+        if not part_type:
+            return {"success": False, "message": "Тип детали не найден"}
+        # Проверка уникальности названия (исключая текущий)
+        existing = db.query(Classificator).filter(
+            Classificator.название == name,
+            Classificator.id != part_type.id_классификатора
+        ).first()
+        if existing:
+            return {"success": False, "message": f"Тип детали с названием '{name}' уже существует"}
+        try:
+            part_type.classificator.название = name
+            part_type.уровень_иерархии = hierarchy_level
+            db.commit()
+            return {"success": True, "message": "Тип детали обновлён"}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+            # ========== ПЕРЕЧИСЛЕНИЯ (ЗАДАНИЕ 1.2) ==========
 
     def add_enumeration(self, db: Session, name: str, description: str = None) -> Dict[str, Any]:
         """Создать новое перечисление"""
@@ -1255,7 +1272,7 @@ class LegoClassifier:
         #  добавили
         
         # Терминальный узел (класс) для мини-фигурок
-        mf_class_result = self.add_node(db, "Мини-фигурка", "терминальный", minifigs_id, sort_order=1)
+        mf_class_result = self.add_node(db, "Мини-фигурка", "мини_фигурка", minifigs_id, sort_order=1)
         if mf_class_result["success"]:
             minifigure_class_id = mf_class_result["node_id"]
         else:

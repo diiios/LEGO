@@ -23,14 +23,19 @@
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createSet()">Создать</button></div>
 </div></div></div>
 
-<div class="modal fade modal-app" id="createPartModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Создание детали</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body">
+<div class="modal fade modal-app" id="createPartModal" tabindex="-1">
+  <div class="modal-dialog">
+    <div class="modal-content">
+      <div class="modal-header"><h5 class="modal-title">Создание детали</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+      <div class="modal-body">
         <div class="form-field mb-3"><label class="form-label" for="partName">Название *</label><input type="text" class="form-control" id="partName"></div>
+        <div class="form-field mb-3"><label class="form-label" for="partParentId">Родительская категория</label><select class="form-select" id="partParentId"></select><div class="form-hint">Выберите узел в классификаторе, куда поместить деталь</div></div>
         <div class="form-field"><label class="form-label" for="partTypeId">Тип детали *</label><select class="form-select" id="partTypeId"></select></div>
+      </div>
+      <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createPart()">Создать</button></div>
     </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="createPart()">Создать</button></div>
-</div></div></div>
+  </div>
+</div>  
 
 <div class="modal fade modal-app" id="createMinifigureModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Создание мини-фигурки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -140,14 +145,6 @@
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateSet()">Сохранить</button></div>
 </div></div></div>
 
-<div class="modal fade modal-app" id="editPartModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
-    <div class="modal-header"><h5 class="modal-title">Редактирование детали</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
-    <div class="modal-body"><input type="hidden" id="editPartId">
-        <div class="form-field mb-3"><label class="form-label" for="editPartName">Название *</label><input type="text" class="form-control" id="editPartName"></div>
-        <div class="form-field"><label class="form-label" for="editPartTypeId">Тип детали *</label><select class="form-select" id="editPartTypeId"></select></div>
-    </div>
-    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updatePart()">Сохранить</button></div>
-</div></div></div>
 
 <div class="modal fade modal-app" id="editMinifigureModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
     <div class="modal-header"><h5 class="modal-title">Редактирование мини-фигурки</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
@@ -211,6 +208,17 @@
         <div class="form-field" id="editParamEnumField"><label class="form-label" for="editParamEnumId">Справочник-перечисление</label><select class="form-select" id="editParamEnumId"></select></div>
     </div>
     <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updateParameter()">Сохранить</button></div>
+</div></div></div>
+
+<div class="modal fade modal-app" id="editPartModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+    <div class="modal-header"><h5 class="modal-title">Редактирование детали</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+        <input type="hidden" id="editPartId">
+        <div class="form-field mb-3"><label class="form-label" for="editPartName">Название *</label><input type="text" class="form-control" id="editPartName"></div>
+        <div class="form-field mb-3"><label class="form-label" for="editPartParentId">Родительская категория</label><select class="form-select" id="editPartParentId"></select><div class="form-hint">Узел в классификаторе</div></div>
+        <div class="form-field"><label class="form-label" for="editPartTypeId">Тип детали *</label><select class="form-select" id="editPartTypeId"><option value="">— загрузка... —</option></select></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button><button class="btn btn-primary" onclick="updatePart()">Сохранить</button></div>
 </div></div></div>
 
 <div class="modal fade modal-app" id="editEnumerationModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">

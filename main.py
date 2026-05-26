@@ -286,29 +286,31 @@ def cleanup_anomalous_parts(db: Session = Depends(get_db)):
 
 @app.post("/parts", tags=["🔧 Детали"], response_model=OperationResult)
 def create_part(data: PartCreate, db: Session = Depends(get_db)):
-    """Создать деталь"""
-    result = classifier.add_part(db, data.name, data.part_type_id)
+    result = classifier.add_part(db, data.name, data.part_type_id, data.parent_id)
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result["message"])
     return result
 
 @app.get("/parts/{part_id}", tags=["🔧 Детали"])
 def get_part(part_id: int, db: Session = Depends(get_db)):
-    """Получить деталь по ID"""
     part = classifier._parts_query(db).filter(Part.id == part_id).first()
     if not part:
         raise HTTPException(status_code=404, detail="Деталь не найдена")
-    return classifier._serialize_part(part)
+    result = classifier._serialize_part(part)
+    # Добавляем parent_id из узла классификатора
+    result["parent_id"] = part.classificator.родительский_id if part.classificator else None
+    return result
 
 @app.put("/parts/{part_id}", tags=["🔧 Детали"], response_model=OperationResult)
 def update_part(part_id: int, data: PartCreate, db: Session = Depends(get_db)):
-    """Обновить деталь"""
     part = db.query(Part).filter(Part.id == part_id).first()
     if not part:
         raise HTTPException(status_code=404, detail="Деталь не найдена")
     try:
         part.classificator.название = data.name
         part.id_типа = data.part_type_id
+        if data.parent_id is not None:
+            part.classificator.родительский_id = data.parent_id
         db.commit()
         return {"success": True, "message": "Деталь обновлена"}
     except Exception as e:
@@ -979,20 +981,26 @@ def delete_age_category(cat_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=str(e))
 
 # UPDATE PartType
+# @app.put("/part-types/{type_id}", tags=["📚 Справочники"], response_model=OperationResult)
+# def update_part_type(type_id: int, data: PartTypeCreate, db: Session = Depends(get_db)):
+#     """Обновить тип детали"""
+#     pt = db.query(PartType).filter(PartType.id == type_id).first()
+#     if not pt:
+#         raise HTTPException(status_code=404, detail="Тип детали не найден")
+#     try:
+#         pt.classificator.название = data.name
+#         pt.уровень_иерархии = data.hierarchy_level
+#         db.commit()
+#         return {"success": True, "message": "Тип детали обновлен"}
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=400, detail=str(e))
 @app.put("/part-types/{type_id}", tags=["📚 Справочники"], response_model=OperationResult)
 def update_part_type(type_id: int, data: PartTypeCreate, db: Session = Depends(get_db)):
-    """Обновить тип детали"""
-    pt = db.query(PartType).filter(PartType.id == type_id).first()
-    if not pt:
-        raise HTTPException(status_code=404, detail="Тип детали не найден")
-    try:
-        pt.classificator.название = data.name
-        pt.уровень_иерархии = data.hierarchy_level
-        db.commit()
-        return {"success": True, "message": "Тип детали обновлен"}
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+    result = classifier.update_part_type(db, type_id, data.name, data.hierarchy_level)
+    if not result["success"]:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
 
 # DELETE PartType
 @app.delete("/part-types/{type_id}", tags=["📚 Справочники"], response_model=OperationResult)

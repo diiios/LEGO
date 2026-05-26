@@ -343,30 +343,49 @@ async function loadMinifigures() {
     setActiveNav(document.querySelector('[data-page="minifigures"]'));
     showLoading();
     try {
-        const mfs = await apiRequest('/minifigures');
-        const textFilter = `
-            <div class="filter-panel mb-3">
-                <div class="filter-grid"><div class="form-field"><label class="form-label" for="fMfText">Поиск</label><input type="text" class="form-control" id="fMfText" placeholder="Персонаж, серия, код" oninput="filterMinifiguresTable()"></div></div>
-            </div>`;
+        const [products, categories] = await Promise.all([
+            apiRequest('/products'),
+            loadCategoriesList()
+        ]);
+        const mfClass = categories.find(c => c.name === 'Мини-фигурка');
+        if (!mfClass) throw new Error('Класс "Мини-фигурка" не найден');
+        const mfs = products.filter(p => p.класс_id === mfClass.id);
         let rows = '';
         for (const mf of mfs) {
-            rows += `<tr data-search="${escapeHtml(`${mf.name} ${mf.character} ${mf.series} ${mf.unique_code}`.toLowerCase())}">
-                <td>${escapeHtml(mf.name)}</td><td>${escapeHtml(mf.character)}</td><td>${escapeHtml(mf.series)}</td><td><code>${escapeHtml(mf.unique_code)}</code></td></tr>`;
+            const params = await apiRequest(`/products/${mf.id}/values`);
+            const rarity = params.find(p => p.обозначение === 'редкость')?.значение || '—';
+            rows += `<tr data-search="${escapeHtml(`${mf.наименование} ${mf.артикул}`.toLowerCase())}">
+                <td>${escapeHtml(mf.наименование)}</td>
+                <td>${escapeHtml(mf.артикул || '—')}</td>
+                <td>${escapeHtml(rarity)}</td>
+                <td class="action-buttons"><button class="btn btn-sm btn-info" onclick="showProductParamsUser(${mf.id})"><i class="fas fa-list"></i> Параметры</button></td>
+            </tr>`;
         }
+        const filterHtml = `<div class="filter-panel mb-3"><div class="filter-grid"><div class="form-field"><label class="form-label" for="fMfText">Поиск</label><input type="text" class="form-control" id="fMfText" placeholder="Название, артикул" oninput="filterMinifiguresTable()"></div></div></div>`;
         document.getElementById('content').innerHTML = `
-            <div class="page-header"><h1>Мини-фигурки</h1><p class="subtitle">Каталог фигурок</p></div>
-            ${textFilter}
-            <div class="card-panel"><div class="card-panel-body table-responsive">
-            <table class="data-table" id="mfTable"><thead><tr><th>Название</th><th>Персонаж</th><th>Серия</th><th>Код</th></tr></thead><tbody>${rows}</tbody></table>
-            </div></div>`;
+            <div class="page-header"><h1>Мини-фигурки</h1><p class="subtitle">Изделия класса «Мини-фигурка» с параметром «редкость»</p></div>
+            ${filterHtml}
+            <div class="card-panel"><div class="card-panel-body table-responsive"><table class="data-table" id="mfTable"><thead><tr><th>Название</th><th>Артикул</th><th>Редкость</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
     } catch (e) { showError(e.message); }
 }
 
 function filterMinifiguresTable() {
     const q = (document.getElementById('fMfText')?.value || '').toLowerCase();
+    let visible = 0;
     document.querySelectorAll('#mfTable tbody tr').forEach(tr => {
-        tr.style.display = !q || tr.dataset.search?.includes(q) ? '' : 'none';
+        const show = !q || tr.dataset.search?.includes(q);
+        tr.style.display = show ? '' : 'none';
+        if (show) visible++;
     });
+    // Показываем/скрываем строку «ничего не найдено»
+    let emptyRow = document.getElementById('mfTableEmptyRow');
+    if (!emptyRow) {
+        emptyRow = document.createElement('tr');
+        emptyRow.id = 'mfTableEmptyRow';
+        emptyRow.innerHTML = '<td colspan="4" class="text-center text-muted py-3">Ничего не найдено</td>';
+        document.querySelector('#mfTable tbody').appendChild(emptyRow);
+    }
+    emptyRow.style.display = visible === 0 ? '' : 'none';
 }
 
 async function loadProductsFilter() {
@@ -697,6 +716,14 @@ async function applyProductsFilter() {
     try {
         const body = buildProductFilterPayload(activeFilters);
         let products = await apiRequest('/products/filter', 'POST', body);
+            // Исключаем мини-фигурки, если класс не выбран
+        // if (!classId) {
+        //     const categories = await loadCategoriesList();
+        //     const mfClass = categories.find(c => c.name === 'Мини-фигурка');
+        //     if (mfClass) {
+        //         products = products.filter(p => p.класс_id !== mfClass.id);
+        //     }
+        // }
         if (!products.length) {
             resultsEl.innerHTML = `<div class="empty-state"><p>Изделия не найдены. Измените условия.</p></div>`;
             return;

@@ -47,33 +47,43 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
             document.getElementById('content').innerHTML = html;
         } catch(e) { showError(e.message); } }
 
-        async function loadMinifigures() { showLoading(); try {
-        // Фигурки теперь — изделия класса «Мини-фигурка»
-        const allProducts = await apiRequest('/products');
-        const mfs = allProducts.filter(p => p.класс_название === 'Мини-фигурка');
-        let html = `<div class="card"><div class="card-header"><i class="fas fa-user-astronaut"></i> Мини-фигурки LEGO
-            <small class="text-muted ms-2">(хранятся как изделия)</small>
-            <div class="float-end">
-                <button class="btn btn-sm btn-primary" onclick="loadMinifigures()"><i class="fas fa-sync-alt"></i> Обновить</button>
-            </div></div>
-            <div class="card-body"><div class="table-responsive">
-            <table class="table table-bordered"><thead><tr>
-                <th>ID</th><th>Название</th><th>Артикул</th><th>Действия</th>
-            </tr></thead><tbody>`;
+        async function loadMinifigures() {
+    showLoading();
+    try {
+        const [products, categories] = await Promise.all([
+            apiRequest('/products'),
+            apiRequest('/categories')
+        ]);
+        const mfClass = categories.find(c => c.name === 'Мини-фигурка');
+        if (!mfClass) throw new Error('Класс "Мини-фигурка" не найден');
+        const mfs = products.filter(p => p.класс_id === mfClass.id);
+        let rows = '';
         for (const mf of mfs) {
-            html += `<tr>
-                <td>${mf.id}</td>
+            const params = await apiRequest(`/products/${mf.id}/values`);
+            const rarity = params.find(p => p.обозначение === 'редкость')?.значение || '—';
+            rows += `<tr>
                 <td>${escapeHtml(mf.наименование)}</td>
-                <td><code>${mf.артикул || '-'}</code></td>
+                <td>${escapeHtml(mf.артикул || '—')}</td>
+                <td>${escapeHtml(rarity)}</td>
                 <td class="action-buttons">
-                    <button class="btn btn-sm btn-info" onclick="showProductParams(${mf.id})"><i class="fas fa-chart-line"></i> Параметры</button>
-                    <button class="btn btn-sm btn-danger" onclick="deleteProduct(${mf.id})"><i class="fas fa-trash"></i></button>
-                </td></tr>`;
+                    <button class="btn btn-sm btn-warning me-1" onclick="showEditMinifigureModal(${mf.id})"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteMinifigure(${mf.id})"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>`;
         }
-        html += `</tbody></table></div></div></div>`;
+        const html = `<div class="card">
+            <div class="card-header">
+                <i class="fas fa-user-astronaut"></i> Мини-фигурки LEGO
+                <div class="float-end">
+                    <button class="btn btn-sm btn-success me-2" onclick="showCreateMinifigureModal()"><i class="fas fa-plus"></i> Создать</button>
+                    <button class="btn btn-sm btn-primary" onclick="loadMinifigures()"><i class="fas fa-sync-alt"></i> Обновить</button>
+                </div>
+            </div>
+            <div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>Название</th><th>Артикул</th><th>Редкость</th><th>Действия</th></tr></thead><tbody>${rows}</tbody></table></div></div>
+        </div>`;
         document.getElementById('content').innerHTML = html;
-    } catch(e) { showError(e.message); } }
-
+    } catch (e) { showError(e.message); }
+}
         async function loadThemes() { showLoading(); try {
             const themes = await apiRequest('/themes');
             let html = `<div class="card"><div class="card-header"><i class="fas fa-tags"></i> Тематики<div class="float-end"><button class="btn btn-sm btn-success me-2" onclick="showCreateThemeModal()"><i class="fas fa-plus"></i> Создать</button><button class="btn btn-sm btn-primary" onclick="loadThemes()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body"><div class="row">`;
@@ -90,13 +100,42 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
             document.getElementById('content').innerHTML = html;
         } catch(e) { showError(e.message); } }
 
-        async function loadPartTypes() { showLoading(); try {
-            const types = await apiRequest('/part-types');
-            let html = `<div class="card"><div class="card-header"><i class="fas fa-cog"></i> Типы деталей<div class="float-end"><button class="btn btn-sm btn-success me-2" onclick="showCreatePartTypeModal()"><i class="fas fa-plus"></i> Создать</button><button class="btn btn-sm btn-primary" onclick="loadPartTypes()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>ID</th><th>Название</th><th>Уровень</th><th>Действия</th></tr></thead><tbody>`;
-            for (const type of types) html += `<tr><td>${type.id}</td><td>${escapeHtml(type.name)}</td><td>${type.hierarchy_level}</td><td class="action-buttons"><button class="btn btn-sm btn-warning" onclick="showEditPartTypeModal(${type.id}, '${escapeHtml(type.name)}', ${type.hierarchy_level})"><i class="fas fa-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deletePartType(${type.id})"><i class="fas fa-trash"></i></button></td></tr>`;
-            html += `</tbody></table></div></div></div>`;
-            document.getElementById('content').innerHTML = html;
-        } catch(e) { showError(e.message); } }
+        async function loadPartTypes() {
+    showLoading();
+    try {
+        const types = await apiRequest('/part-types');
+        let html = `<div class="card">
+            <div class="card-header">
+                <i class="fas fa-cog"></i> Типы деталей
+                <div class="float-end">
+                    <button class="btn btn-sm btn-success me-2" onclick="showCreatePartTypeModal()"><i class="fas fa-plus"></i> Создать</button>
+                    <button class="btn btn-sm btn-primary" onclick="loadPartTypes()"><i class="fas fa-sync-alt"></i> Обновить</button>
+                </div>
+            </div>
+            <div class="card-body">
+                <div class="table-responsive">
+                    <table class="table table-bordered">
+                        <thead>
+                            <tr><th>ID</th><th>Название</th><th>Уровень</th><th>Действия</th></tr>
+                        </thead>
+                        <tbody>`;
+        for (const type of types) {
+            html += `<tr>
+                <td>${type.id}</td>
+                <td>${escapeHtml(type.name)}</td>
+                <td>${type.hierarchy_level}</td>
+                <td class="action-buttons">
+                    <button class="btn btn-sm btn-warning" onclick="showEditPartTypeModal(${type.id}, '${escapeHtml(type.name)}', ${type.hierarchy_level})"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-sm btn-danger" onclick="deletePartType(${type.id})"><i class="fas fa-trash"></i></button>
+                </td>
+            </tr>`;
+        }
+        html += `</tbody></table></div></div></div>`;
+        document.getElementById('content').innerHTML = html;
+    } catch(e) {
+        showError(e.message);
+    }
+}
 
         async function loadParameters() { showLoading(); try {
             const params = await apiRequest('/parameters');
@@ -188,10 +227,38 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
             if(!data.name||!data.part_type_id){showToast('Заполните все поля','error');return;}
             try{await apiRequest('/parts','POST',data); showToast('Деталь создана'); bootstrap.Modal.getInstance(document.getElementById('createPartModal')).hide(); loadParts();}catch(e){showToast(e.message,'error');} }
 
-        async function createMinifigure() { const data={name:document.getElementById('mfName').value.trim(),character:document.getElementById('mfCharacter').value.trim(),series:document.getElementById('mfSeries').value.trim(),unique_code:document.getElementById('mfCode').value.trim()};
-            if(!data.name||!data.character||!data.series||!data.unique_code){showToast('Заполните все поля','error');return;}
-            try{await apiRequest('/minifigures','POST',data); showToast('Мини-фигурка создана'); bootstrap.Modal.getInstance(document.getElementById('createMinifigureModal')).hide(); loadMinifigures();}catch(e){showToast(e.message,'error');} }
-
+        async function createMinifigure() {
+    const name = document.getElementById('mfName').value.trim();
+    const code = document.getElementById('mfCode').value.trim();
+    const rarityId = document.getElementById('mfRarity')?.value;
+    if (!name || !code) { showToast('Заполните название и артикул', 'error'); return; }
+    try {
+        // Находим класс «Мини-фигурка»
+        const cats = await apiRequest('/categories');
+        const mfClass = cats.find(c => c.name === 'Мини-фигурка');
+        if (!mfClass) { showToast('Класс «Мини-фигурка» не найден', 'error'); return; }
+        // Создаём как изделие
+        const prod = await apiRequest('/products', 'POST', {
+            класс_id: mfClass.id,
+            наименование: name,
+            артикул: code
+        });
+        // Устанавливаем редкость если выбрана
+        if (rarityId && prod.product_id) {
+            const params = await apiRequest(`/classes/${mfClass.id}/parameters`);
+            const rarityParam = params.find(p => p.обозначение === 'редкость');
+            if (rarityParam) {
+                await apiRequest(`/products/${prod.product_id}/values`, 'POST', {
+                    param_class_id: rarityParam.param_class_id,
+                    value: parseInt(rarityId)
+                });
+            }
+        }
+        showToast('Мини-фигурка создана');
+        bootstrap.Modal.getInstance(document.getElementById('createMinifigureModal')).hide();
+        loadMinifigures();
+    } catch(e) { showToast(e.message, 'error'); }
+}
         async function createTheme() { const data={name:document.getElementById('themeName').value.trim(),description:document.getElementById('themeDesc').value.trim()};
             if(!data.name){showToast('Введите название','error');return;}
             try{await apiRequest('/themes','POST',data); showToast('Тематика создана'); bootstrap.Modal.getInstance(document.getElementById('createThemeModal')).hide(); loadThemes();}catch(e){showToast(e.message,'error');} }
@@ -242,9 +309,12 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         async function updateAgeCategory() { const id=document.getElementById('editAgeId').value; const data={name:document.getElementById('editAgeName').value.trim(),min_age:parseInt(document.getElementById('editAgeMin').value),max_age:parseInt(document.getElementById('editAgeMax').value)};
             try{await apiRequest(`/age-categories/${id}`,'PUT',data); showToast('Возрастная категория обновлена'); bootstrap.Modal.getInstance(document.getElementById('editAgeCategoryModal')).hide(); loadAgeCategories();}catch(e){showToast(e.message,'error');} }
 
-        async function updatePartType() { const id=document.getElementById('editPartTypeId').value; const data={name:document.getElementById('editPartTypeName').value.trim(),hierarchy_level:parseInt(document.getElementById('editPartTypeLevel').value)};
-            try{await apiRequest(`/part-types/${id}`,'PUT',data); showToast('Тип детали обновлён'); bootstrap.Modal.getInstance(document.getElementById('editPartTypeModal')).hide(); loadPartTypes();}catch(e){showToast(e.message,'error');} }
-
+        async function updatePartType() {
+    const id = document.getElementById('editPartTypeId').value;
+    const data = {name: document.getElementById('editPartTypeName').value.trim(), hierarchy_level: parseInt(document.getElementById('editPartTypeLevel').value)};
+    console.log('PUT /part-types/' + id, data); // проверь в консоли
+    try { await apiRequest(`/part-types/${id}`, 'PUT', data); showToast('Тип детали обновлён'); bootstrap.Modal.getInstance(document.getElementById('editPartTypeModal')).hide(); loadPartTypes(); } catch(e) { showToast(e.message, 'error'); }
+}
         async function updateParameter() { const id=document.getElementById('editParamId').value; const data={обозначение:document.getElementById('editParamCode').value.trim(),полное_имя:document.getElementById('editParamName').value.trim(),тип_параметра:document.getElementById('editParamType').value,единица_измерения:document.getElementById('editParamUnit').value.trim()||null,перечисление_id:document.getElementById('editParamEnumId').value?parseInt(document.getElementById('editParamEnumId').value):null};
             try{await apiRequest(`/parameters/${id}`,'PUT',data); showToast('Параметр обновлён'); bootstrap.Modal.getInstance(document.getElementById('editParameterModal')).hide(); loadParameters();}catch(e){showToast(e.message,'error');} }
 
@@ -324,8 +394,13 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         async function showEditSetModal(id){ try{const s=await apiRequest(`/sets/${id}`); await fillSetSelects('editSet'); document.getElementById('editSetId').value=s.id; document.getElementById('editSetName').value=s.name; document.getElementById('editSetCatalog').value=s.catalog_number; document.getElementById('editSetYear').value=s.year; document.getElementById('editSetPrice').value=s.price; document.getElementById('editSetParts').value=s.parts_count; document.getElementById('editSetAgeId').value=s.age_category_id; document.getElementById('editSetThemeId').value=s.theme_id; new bootstrap.Modal(document.getElementById('editSetModal')).show();}catch(e){showToast(e.message,'error');} }
         function showEditThemeModal(id,name,desc){ document.getElementById('editThemeId').value=id; document.getElementById('editThemeName').value=name; document.getElementById('editThemeDesc').value=desc; new bootstrap.Modal(document.getElementById('editThemeModal')).show(); }
         function showEditAgeCategoryModal(id,name,min,max){ document.getElementById('editAgeId').value=id; document.getElementById('editAgeName').value=name; document.getElementById('editAgeMin').value=min; document.getElementById('editAgeMax').value=max; new bootstrap.Modal(document.getElementById('editAgeCategoryModal')).show(); }
-        function showEditPartTypeModal(id,name,level){ document.getElementById('editPartTypeId').value=id; document.getElementById('editPartTypeName').value=name; document.getElementById('editPartTypeLevel').value=level; new bootstrap.Modal(document.getElementById('editPartTypeModal')).show(); }
-        async function showEditParameterModal(id){ try{const p=await apiRequest(`/parameters/${id}`); document.getElementById('editParamId').value=p.id; document.getElementById('editParamCode').value=p.обозначение; document.getElementById('editParamName').value=p.полное_имя; document.getElementById('editParamType').value=p.тип_параметра; document.getElementById('editParamUnit').value=p.единица_измерения||''; document.getElementById('editParamEnumId').value=p.перечисление_id||''; new bootstrap.Modal(document.getElementById('editParameterModal')).show();}catch(e){showToast(e.message,'error');} }
+function showEditPartTypeModal(id, name, level) {
+    console.log('Editing part type with id:', id);  // для отладки
+    document.getElementById('editPartTypeId').value = id;
+    document.getElementById('editPartTypeName').value = name;
+    document.getElementById('editPartTypeLevel').value = level;
+    new bootstrap.Modal(document.getElementById('editPartTypeModal')).show();
+}        async function showEditParameterModal(id){ try{const p=await apiRequest(`/parameters/${id}`); document.getElementById('editParamId').value=p.id; document.getElementById('editParamCode').value=p.обозначение; document.getElementById('editParamName').value=p.полное_имя; document.getElementById('editParamType').value=p.тип_параметра; document.getElementById('editParamUnit').value=p.единица_измерения||''; document.getElementById('editParamEnumId').value=p.перечисление_id||''; new bootstrap.Modal(document.getElementById('editParameterModal')).show();}catch(e){showToast(e.message,'error');} }
         function showEditEnumerationModal(id,name,desc){ document.getElementById('editEnumId').value=id; document.getElementById('editEnumName').value=name; document.getElementById('editEnumDesc').value=desc; new bootstrap.Modal(document.getElementById('editEnumerationModal')).show(); }
         function showEditEnumValueModal(id,eid,val,order){ document.getElementById('editEnumValueId').value=id; document.getElementById('editEnumValueEnumId').value=eid; document.getElementById('editEnumValue').value=val; document.getElementById('editEnumValueOrder').value=order; new bootstrap.Modal(document.getElementById('editEnumValueModal')).show(); }
         function showEditSubjectModal(id,name,inn,contact,phone){ document.getElementById('editSubjectId').value=id; document.getElementById('editSubjectName').value=name; document.getElementById('editSubjectInn').value=inn; document.getElementById('editSubjectContact').value=contact; document.getElementById('editSubjectPhone').value=phone; new bootstrap.Modal(document.getElementById('editSubjectModal')).show(); }
@@ -335,8 +410,34 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         // Функции показа модальных окон создания
         function showCreateCategoryModal(){ document.getElementById('catName').value=''; document.getElementById('catParentId').value=''; document.getElementById('catSortOrder').value='0'; new bootstrap.Modal(document.getElementById('createCategoryModal')).show(); }
         async function showCreateSetModal(){ await fillSetSelects('set'); document.getElementById('setName').value=''; document.getElementById('setCatalog').value=''; document.getElementById('setYear').value=''; document.getElementById('setPrice').value=''; document.getElementById('setParts').value=''; document.getElementById('setAgeId').value=''; document.getElementById('setThemeId').value=''; new bootstrap.Modal(document.getElementById('createSetModal')).show(); }
-        async function showCreatePartModal(){ await fillPartTypeSelect('part'); document.getElementById('partName').value=''; document.getElementById('partTypeId').value=''; new bootstrap.Modal(document.getElementById('createPartModal')).show(); }
-        function showCreateMinifigureModal(){ document.getElementById('mfName').value=''; document.getElementById('mfCharacter').value=''; document.getElementById('mfSeries').value=''; document.getElementById('mfCode').value=''; new bootstrap.Modal(document.getElementById('createMinifigureModal')).show(); }
+        // async function showCreatePartModal() {
+        //     await fillPartTypeSelect('part');
+        //     await loadCategoriesList();  // убедимся, что категории загружены
+        //     const cats = REF_CACHE.categories || await apiRequest('/categories');
+        //     const parentOpts = buildCategorySelectOptions(cats, '— без родителя —');
+        //     const parentSelect = document.getElementById('partParentId');
+        //     if (parentSelect) parentSelect.outerHTML = `<select class="form-select" id="partParentId">${parentOpts}</select>`;
+        //     document.getElementById('partName').value = '';
+        //     document.getElementById('partTypeId').value = '';
+        //     new bootstrap.Modal(document.getElementById('createPartModal')).show();
+        // }        
+        async function showCreateMinifigureModal() {
+            document.getElementById('mfName').value = '';
+            document.getElementById('mfCode').value = '';
+            // Загружаем перечисление "Редкость" для выпадашки
+            try {
+                const enums = await apiRequest('/enumerations');
+                const rarityEnum = enums.find(e => e.name === 'Редкость');
+                let rarityOpts = '<option value="">— не указана —</option>';
+                if (rarityEnum) {
+                    const vals = await apiRequest(`/enumerations/${rarityEnum.id}/values`);
+                    rarityOpts += vals.map(v => `<option value="${v.id}">${escapeHtml(v.value)}</option>`).join('');
+                }
+                const rarityEl = document.getElementById('mfRarity');
+                if (rarityEl) rarityEl.outerHTML = `<select class="form-select mb-2" id="mfRarity">${rarityOpts}</select>`;
+            } catch(e) { /* тихо игнорируем */ }
+            new bootstrap.Modal(document.getElementById('createMinifigureModal')).show();
+        }
         function showCreateThemeModal(){ document.getElementById('themeName').value=''; document.getElementById('themeDesc').value=''; new bootstrap.Modal(document.getElementById('createThemeModal')).show(); }
         function showCreateAgeCategoryModal(){ document.getElementById('ageName').value=''; document.getElementById('ageMin').value=''; document.getElementById('ageMax').value=''; new bootstrap.Modal(document.getElementById('createAgeCategoryModal')).show(); }
         function showCreatePartTypeModal(){ document.getElementById('ptName').value=''; document.getElementById('ptLevel').value=''; new bootstrap.Modal(document.getElementById('createPartTypeModal')).show(); }
@@ -348,7 +449,8 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
             // Загружаем только терминальные классы
             try {
                 const cats = await apiRequest('/categories');
-                const terminal = cats.filter(c => c.node_type === 'терминальный');
+                const terminal = cats.filter(c => c.node_type === 'терминальный' || c.node_type === 'мини_фигурка')
+                      .filter(c => c.node_type !== 'мини_фигурка'); // убираем мини-фигурки из общего списка
                 const opts = '<option value="">— выберите класс —</option>' +
                     terminal.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (ID: ${c.id})</option>`).join('');
                 const el = document.getElementById('productClassId');
@@ -360,13 +462,13 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         function showCreateSubjectModal(){ document.getElementById('subjectName').value=''; document.getElementById('subjectInn').value=''; document.getElementById('subjectContact').value=''; document.getElementById('subjectPhone').value=''; new bootstrap.Modal(document.getElementById('createSubjectModal')).show(); }
         async function showCreateHOOperationModal(){ await preloadAdminRefs(); const el = document.getElementById('hoOpTypeId'); if (el && el.tagName === 'INPUT') el.outerHTML = `<select class="form-select mb-2" id="hoOpTypeId">${buildSelectOptions(adminCache.hoTypes, 'id', 'название')}</select>`; document.getElementById('hoOpNumber').value=''; document.getElementById('hoOpDate').value=''; new bootstrap.Modal(document.getElementById('createHOOperationModal')).show(); }
             
-        function getNodeIconEmoji(t){const i={'промежуточный':'📁','терминальный':'📄','набор':'🧩','тематика':'🏷️','возрастная_категория':'🎂','тип_детали':'⚙️'}; return i[t]||'📦';}
+        function getNodeIconEmoji(t){const i={'промежуточный':'📁','терминальный':'📄','набор':'🧩','тематика':'🏷️','возрастная_категория':'🎂','тип_детали':'⚙️','мини_фигурка':'🧸'}; return i[t]||'📦';}
         function getProductIconEmoji(t){const i={'set':'🧩','part':'🔧','minifigure':'🧸'}; return i[t]||'📦';}
 
 function navigateAdmin(ev, fn) { if (ev?.preventDefault) ev.preventDefault(); if (ev?.currentTarget) setActiveNav(ev.currentTarget); fn(); }
 async function preloadAdminRefs() { try { adminCache.themes = await apiRequest("/themes"); adminCache.ages = await apiRequest("/age-categories"); adminCache.partTypes = await apiRequest("/part-types"); adminCache.enums = await apiRequest("/enumerations"); } catch (_) {} }
 async function fillSetSelects(prefix) { await preloadAdminRefs(); const age = document.getElementById(prefix + "AgeId"); const theme = document.getElementById(prefix + "ThemeId"); if (age) age.outerHTML = `<select class="form-select mb-2" id="${prefix}AgeId">${buildSelectOptions(adminCache.ages, "id", "name")}</select>`; if (theme) theme.outerHTML = `<select class="form-select mb-2" id="${prefix}ThemeId">${buildSelectOptions(adminCache.themes, "id", "name")}</select>`; }
-async function fillPartTypeSelect(prefix) { await preloadAdminRefs(); const el = document.getElementById(prefix + "TypeId"); if (el) el.outerHTML = `<select class="form-select" id="${prefix}TypeId">${buildSelectOptions(adminCache.partTypes, "id", "name")}</select>`; }
+
 document.addEventListener("DOMContentLoaded", () => {
     initSidebarToggle();
     preloadAdminRefs();

@@ -63,7 +63,8 @@ class SetResponse(BaseModel):
 class PartCreate(BaseModel):
     name: str
     part_type_id: int
-
+    parent_id: Optional[int] = None   # <-- добавить эту строку
+    
 class PartResponse(BaseModel):
     id: int
     name: str
