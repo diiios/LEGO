@@ -1229,6 +1229,10 @@ class LegoClassifier:
         
         sets_id = sets_result["node_id"]
         parts_id = parts_result["node_id"]
+
+        #  добавили
+        minifigs_id = minifigs_result["node_id"]
+        # конец добавления
         
         # 5. Подкатегории наборов
         self.add_node(db, "Тематика City", "промежуточный", sets_id, sort_order=1)
@@ -1247,7 +1251,21 @@ class LegoClassifier:
         plate_1x2_id = self.add_node(db, "Плита 1x2", "терминальный", plates_id, sort_order=1)["node_id"]
         self.add_node(db, "Плита 2x4", "терминальный", plates_id, sort_order=2)
         wheel_id = self.add_node(db, "Колесо", "терминальный", special_id, sort_order=1)["node_id"]
+
+        #  добавили
         
+        # Терминальный узел (класс) для мини-фигурок
+        mf_class_result = self.add_node(db, "Мини-фигурка", "терминальный", minifigs_id, sort_order=1)
+        if mf_class_result["success"]:
+            minifigure_class_id = mf_class_result["node_id"]
+        else:
+            # если узел уже существует (например, после повторной загрузки данных)
+            existing = db.query(Classificator).filter(Classificator.название == "Мини-фигурка", Classificator.родительский_id == minifigs_id).first()
+            minifigure_class_id = existing.id if existing else None
+
+        # конец добавления
+
+
         # 8. Типы деталей
         brick_type = self.add_part_type(db, "Кирпич", 1)
         plate_type = self.add_part_type(db, "Плита", 1)
@@ -1289,11 +1307,14 @@ class LegoClassifier:
 
         enum_rarity = self.add_enumeration(db, "Редкость", "Редкость мини-фигурок")
         if enum_rarity["success"]:
-            enum_id = enum_rarity["enum_id"]
-            self.add_enum_value(db, enum_id, "Common", 1)
-            self.add_enum_value(db, enum_id, "Rare", 2)
-            self.add_enum_value(db, enum_id, "Exclusive", 3)
-
+            enum_rarity_id = enum_rarity["enum_id"]          # ← было: enum_id
+            self.add_enum_value(db, enum_rarity_id, "Common", 1)
+            self.add_enum_value(db, enum_rarity_id, "Rare", 2)
+            self.add_enum_value(db, enum_rarity_id, "Exclusive", 3)
+        else:
+            # если уже было
+            existing_enum = db.query(Enumeration).filter(Enumeration.name == "Редкость").first()
+            enum_rarity_id = existing_enum.id if existing_enum else None
         db.commit()
         print("  Тестовые перечисления добавлены")
 
@@ -1367,6 +1388,12 @@ class LegoClassifier:
                         value = color_values.get(value)
                     if value is not None:
                         self.set_product_param_value(db, product["product_id"], param_class_map[code], value)
+                        # minifigure_products[sku] = prod_res["product_id"]
+        # Параметр "редкость" для мини-фигурок
+        if enum_rarity_id:
+            rarity_param = self.add_parameter(db, "редкость", "Редкость мини-фигурки", "ENUM", перечисление_id=enum_rarity_id)
+            if rarity_param["success"] and minifigure_class_id:
+                self.add_param_to_class(db, minifigure_class_id, rarity_param["param_id"], обязательный=True)
 
         db.commit()
         print("  Параметры и изделия добавлены")
@@ -1377,39 +1404,64 @@ class LegoClassifier:
         self.add_set(db, "Полицейский участок", "60266", 2020, 129.99, 745, age_6.id, city_theme.id, sets_id)
         self.add_set(db, "Внедорожник", "42110", 2019, 199.99, 2573, age_14.id, technic_theme.id, sets_id)
         
-        # 11. Добавление типов деталей без жёстких характеристик
+                # 11. Добавление типов деталей без жёстких характеристик
         self.add_part(db, "Кирпич 2x4", brick_type_id)
         self.add_part(db, "Кирпич 2x2", brick_type_id)
         self.add_part(db, "Плита 1x2", plate_type_id)
         self.add_part(db, "Колесо", special_type_id)
         
-        # 12. Добавление мини-фигурок
-        self.add_minifigure(db, "Люк Скайуокер", "Люк", "Star Wars", "SW001")
-        self.add_minifigure(db, "Дарт Вейдер", "Дарт Вейдер", "Star Wars", "SW002")
-        self.add_minifigure(db, "Полицейский", "Полицейский", "City", "CT001")
+                # 12. Добавление мини-фигурок
+        minifigure_products = {}
+        if minifigure_class_id:
+            # Найдём param_class_id для параметра "редкость"
+            param_class = db.query(ParameterClass).join(Parameter).filter(
+                ParameterClass.класс_id == minifigure_class_id,
+                Parameter.обозначение == "редкость"
+            ).first()
+            
+            mf_data = [
+                ("Люк Скайуокер", "MF-SW001", "Rare"),
+                ("Дарт Вейдер", "MF-SW002", "Exclusive"),
+                ("Полицейский", "MF-CT001", "Common"),
+            ]
+            for name, sku, rarity in mf_data:
+                prod_res = self.add_product(db, minifigure_class_id, name, sku)
+                if prod_res["success"] and prod_res["product_id"] and param_class and enum_rarity_id:
+                    rarity_val = db.query(EnumValue).filter(
+                        EnumValue.enumeration_id == enum_rarity_id,
+                        EnumValue.value == rarity
+                    ).first()
+                    if rarity_val:
+                        self.set_product_param_value(db, prod_res["product_id"], param_class.id, rarity_val.id)
+                        # ДОБАВЬТЕ ЭТУ СТРОКУ:
+                        minifigure_products[sku] = prod_res["product_id"]
         
-        # 13. Добавление связей набор-деталь и набор-фигурка
+        # 13. Добавление связей набор-деталь и мини-фигурка
         death_star = db.query(Set).join(Classificator).filter(Classificator.название == "Звезда Смерти").first()
         spaceship = db.query(Set).join(Classificator).filter(Classificator.название == "Космический корабль").first()
         
-        luke = db.query(Minifigure).filter(Minifigure.уникальный_код == "SW001").first()
-        vader = db.query(Minifigure).filter(Minifigure.уникальный_код == "SW002").first()
-        
-        # Связи для Звезды Смерти
+        # Связи для Звезды Смерти (детали)
         db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["BR-2X4-RED"], количество_штук=50))
         db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["BR-2X4-BLU"], количество_штук=30))
         db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["BR-2X2-GRN"], количество_штук=40))
         db.add(SetPart(id_набора=death_star.id, id_детали=product_ids["PL-1X2-WHT"], количество_штук=100))
         
-        db.add(SetMinifigure(id_набора=death_star.id, id_фигурки=luke.id, количество_штук=2))
-        db.add(SetMinifigure(id_набора=death_star.id, id_фигурки=vader.id, количество_штук=1))
+        # Мини-фигурки в Звезду Смерти
+        luke_product_id = minifigure_products.get("MF-SW001")
+        vader_product_id = minifigure_products.get("MF-SW002")
+        if luke_product_id:
+            db.add(SetPart(id_набора=death_star.id, id_детали=luke_product_id, количество_штук=2))
+        if vader_product_id:
+            db.add(SetPart(id_набора=death_star.id, id_детали=vader_product_id, количество_штук=1))
         
-        # Связи для Космического корабля
+        # Связи для Космического корабля (детали)
         db.add(SetPart(id_набора=spaceship.id, id_детали=product_ids["BR-2X4-YEL"], количество_штук=20))
         db.add(SetPart(id_набора=spaceship.id, id_детали=product_ids["BR-2X2-GRN"], количество_штук=15))
         db.add(SetPart(id_набора=spaceship.id, id_детали=product_ids["WH-30-BLK"], количество_штук=4))
         
-        db.add(SetMinifigure(id_набора=spaceship.id, id_фигурки=luke.id, количество_штук=1))
+        # Мини-фигурка в Космический корабль
+        if luke_product_id:
+            db.add(SetPart(id_набора=spaceship.id, id_детали=luke_product_id, количество_штук=1))
         
         db.commit()
 
@@ -2058,22 +2110,20 @@ class LegoClassifier:
                             "part_type": p.get("type_name")
                         })
             
-            # Добавляем мини-фигурки
-            minifigs = self.get_all_minifigures(db)
-            for m in minifigs:
-                mf_node = db.query(Classificator).filter(
-                    Classificator.название == m["name"]
-                ).first()
-                if mf_node and mf_node.родительский_id:
-                    parent_id = mf_node.родительский_id
-                    if parent_id in nodes_dict:
-                        nodes_dict[parent_id]["products"].append({
-                            "id": m["id"],
-                            "name": m["name"],
-                            "type": "minifigure",
-                            "character": m["character"],
-                            "unique_code": m["unique_code"]
-                        })
+            # Добавляем мини-фигурки (теперь это изделия класса «Мини-фигурка»)
+            mf_class = db.query(Classificator).filter(
+                Classificator.название == "Мини-фигурка"
+            ).first()
+            if mf_class and mf_class.родительский_id in nodes_dict:
+                mf_products = db.query(Product).filter(
+                    Product.класс_id == mf_class.id
+                ).all()
+                for mf in mf_products:
+                    nodes_dict[mf_class.родительский_id]["products"].append({
+                        "id": mf.id,
+                        "name": mf.наименование,
+                        "type": "minifigure",
+                    })
         
         # Строим дерево
         trees = []

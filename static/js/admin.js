@@ -48,12 +48,31 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         } catch(e) { showError(e.message); } }
 
         async function loadMinifigures() { showLoading(); try {
-            const mfs = await apiRequest('/minifigures');
-            let html = `<div class="card"><div class="card-header"><i class="fas fa-user-astronaut"></i> Мини-фигурки LEGO<div class="float-end"><button class="btn btn-sm btn-success me-2" onclick="showCreateMinifigureModal()"><i class="fas fa-plus"></i> Создать</button><button class="btn btn-sm btn-primary" onclick="loadMinifigures()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body"><div class="table-responsive"><table class="table table-bordered"><thead><tr><th>ID</th><th>Название</th><th>Персонаж</th><th>Серия</th><th>Код</th><th>Действия</th></tr></thead><tbody>`;
-            for (const mf of mfs) html += `<tr><td>${mf.id}</td><td>${escapeHtml(mf.name)}</td><td>${escapeHtml(mf.character)}</td><td>${escapeHtml(mf.series)}</td><td><code>${escapeHtml(mf.unique_code)}</code></td><td class="action-buttons"><button class="btn btn-sm btn-danger" onclick="deleteMinifigure(${mf.id})"><i class="fas fa-trash"></i></button></td></tr>`;
-            html += `</tbody></table></div></div></div>`;
-            document.getElementById('content').innerHTML = html;
-        } catch(e) { showError(e.message); } }
+        // Фигурки теперь — изделия класса «Мини-фигурка»
+        const allProducts = await apiRequest('/products');
+        const mfs = allProducts.filter(p => p.класс_название === 'Мини-фигурка');
+        let html = `<div class="card"><div class="card-header"><i class="fas fa-user-astronaut"></i> Мини-фигурки LEGO
+            <small class="text-muted ms-2">(хранятся как изделия)</small>
+            <div class="float-end">
+                <button class="btn btn-sm btn-primary" onclick="loadMinifigures()"><i class="fas fa-sync-alt"></i> Обновить</button>
+            </div></div>
+            <div class="card-body"><div class="table-responsive">
+            <table class="table table-bordered"><thead><tr>
+                <th>ID</th><th>Название</th><th>Артикул</th><th>Действия</th>
+            </tr></thead><tbody>`;
+        for (const mf of mfs) {
+            html += `<tr>
+                <td>${mf.id}</td>
+                <td>${escapeHtml(mf.наименование)}</td>
+                <td><code>${mf.артикул || '-'}</code></td>
+                <td class="action-buttons">
+                    <button class="btn btn-sm btn-info" onclick="showProductParams(${mf.id})"><i class="fas fa-chart-line"></i> Параметры</button>
+                    <button class="btn btn-sm btn-danger" onclick="deleteProduct(${mf.id})"><i class="fas fa-trash"></i></button>
+                </td></tr>`;
+        }
+        html += `</tbody></table></div></div></div>`;
+        document.getElementById('content').innerHTML = html;
+    } catch(e) { showError(e.message); } }
 
         async function loadThemes() { showLoading(); try {
             const themes = await apiRequest('/themes');
@@ -323,11 +342,24 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
         function showCreatePartTypeModal(){ document.getElementById('ptName').value=''; document.getElementById('ptLevel').value=''; new bootstrap.Modal(document.getElementById('createPartTypeModal')).show(); }
         function showCreateParameterModal(){ document.getElementById('paramCode').value=''; document.getElementById('paramName').value=''; document.getElementById('paramType').value='REAL'; document.getElementById('paramUnit').value=''; document.getElementById('paramEnumId').value=''; new bootstrap.Modal(document.getElementById('createParameterModal')).show(); }
         function showCreateEnumerationModal(){ document.getElementById('enumName').value=''; document.getElementById('enumDesc').value=''; new bootstrap.Modal(document.getElementById('createEnumerationModal')).show(); }
-        function showCreateProductModal(){ document.getElementById('productName').value=''; document.getElementById('productArticle').value=''; document.getElementById('productClassId').value=''; new bootstrap.Modal(document.getElementById('createProductModal')).show(); }
+        async function showCreateProductModal() {
+            document.getElementById('productName').value = '';
+            document.getElementById('productArticle').value = '';
+            // Загружаем только терминальные классы
+            try {
+                const cats = await apiRequest('/categories');
+                const terminal = cats.filter(c => c.node_type === 'терминальный');
+                const opts = '<option value="">— выберите класс —</option>' +
+                    terminal.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (ID: ${c.id})</option>`).join('');
+                const el = document.getElementById('productClassId');
+                if (el) el.outerHTML = `<select class="form-select mb-2" id="productClassId">${opts}</select>`;
+            } catch(e) { showToast('Не удалось загрузить классы: ' + e.message, 'error'); }
+            new bootstrap.Modal(document.getElementById('createProductModal')).show();
+        }
         function showCreateHOTypeModal(){ document.getElementById('hoTypeName').value=''; document.getElementById('hoTypeParent').value=''; new bootstrap.Modal(document.getElementById('createHOTypeModal')).show(); }
         function showCreateSubjectModal(){ document.getElementById('subjectName').value=''; document.getElementById('subjectInn').value=''; document.getElementById('subjectContact').value=''; document.getElementById('subjectPhone').value=''; new bootstrap.Modal(document.getElementById('createSubjectModal')).show(); }
         async function showCreateHOOperationModal(){ await preloadAdminRefs(); const el = document.getElementById('hoOpTypeId'); if (el && el.tagName === 'INPUT') el.outerHTML = `<select class="form-select mb-2" id="hoOpTypeId">${buildSelectOptions(adminCache.hoTypes, 'id', 'название')}</select>`; document.getElementById('hoOpNumber').value=''; document.getElementById('hoOpDate').value=''; new bootstrap.Modal(document.getElementById('createHOOperationModal')).show(); }
-
+            
         function getNodeIconEmoji(t){const i={'промежуточный':'📁','терминальный':'📄','набор':'🧩','тематика':'🏷️','возрастная_категория':'🎂','тип_детали':'⚙️'}; return i[t]||'📦';}
         function getProductIconEmoji(t){const i={'set':'🧩','part':'🔧','minifigure':'🧸'}; return i[t]||'📦';}
 
