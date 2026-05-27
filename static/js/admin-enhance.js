@@ -338,34 +338,69 @@ async function showEditParameterModal(id) {
 async function showEditPartModal(id) {
     try {
         const part = await apiRequest(`/parts/${id}`);
-        openModal('editPartModal');
-
-        document.getElementById('editPartId').value = part.id;
-        document.getElementById('editPartName').value = part.name;
-
-        // Загружаем типы деталей
         const types = await apiRequest('/part-types');
-        console.log('types:', types);  // посмотри в консоли что приходит
-        console.log('part.part_type_id:', part.part_type_id);
-        const typeSelect = document.getElementById('editPartTypeId');
-        typeSelect.innerHTML = '<option value="">— выберите тип —</option>'
-            + types.map(t => `<option value="${t.id}">${escapeHtml(t.name)}</option>`).join('');
-        // Явно устанавливаем выбранное значение ПОСЛЕ innerHTML
-        if (part.part_type_id) {
-            typeSelect.value = String(part.part_type_id);
-        }
-
-        // Загружаем категории
         const cats = await apiRequest('/categories');
-        const parentSelect = document.getElementById('editPartParentId');
-        parentSelect.innerHTML = '<option value="">— без родителя —</option>'
-            + cats.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.node_type}, ID: ${c.id})</option>`).join('');
-        if (part.parent_id) {
-            parentSelect.value = String(part.parent_id);
-        }
 
+        // Строим опции для селектора типов
+        let typeOptions = '<option value="">— выберите тип —</option>';
+        types.forEach(t => {
+            typeOptions += `<option value="${t.id}" ${part.part_type_id == t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`;
+        });
+
+        // Строим опции для селектора родителей
+        let parentOptions = '<option value="">— без родителя —</option>';
+        cats.forEach(c => {
+            parentOptions += `<option value="${c.id}" ${part.parent_id == c.id ? 'selected' : ''}>${escapeHtml(c.name)} (${c.node_type})</option>`;
+        });
+
+        // Создаём HTML модала
+        const modalHtml = `
+            <div class="modal fade modal-app" id="dynamicEditPartModal" tabindex="-1">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title">Редактирование детали</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <input type="hidden" id="editPartId" value="${part.id}">
+                            <div class="form-field mb-3">
+                                <label class="form-label" for="editPartName">Название *</label>
+                                <input type="text" class="form-control" id="editPartName" value="${escapeHtml(part.name)}">
+                            </div>
+                            <div class="form-field mb-3">
+                                <label class="form-label" for="editPartParentId">Родительская категория</label>
+                                <select class="form-select" id="editPartParentId">${parentOptions}</select>
+                            </div>
+                            <div class="form-field">
+                                <label class="form-label" for="editPartTypeId">Тип детали *</label>
+                                <select class="form-select" id="editPartTypeId">${typeOptions}</select>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Отмена</button>
+                            <button type="button" class="btn btn-primary" onclick="updatePart()">Сохранить</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        // Удаляем предыдущий динамический модал, если есть
+        const oldModal = document.getElementById('dynamicEditPartModal');
+        if (oldModal) oldModal.remove();
+
+        // Добавляем новый модал в DOM
+        document.body.insertAdjacentHTML('beforeend', modalHtml);
+        const modalEl = document.getElementById('dynamicEditPartModal');
+        const bsModal = new bootstrap.Modal(modalEl);
+        bsModal.show();
+
+        // При закрытии удаляем модал из DOM
+        modalEl.addEventListener('hidden.bs.modal', () => modalEl.remove());
     } catch(e) {
-        showToast(e.message, 'error');
+        console.error(e);
+        showToast('Ошибка: ' + e.message, 'error');
     }
 }
 async function showEditMinifigureModal(id) {
@@ -382,6 +417,7 @@ async function showEditMinifigureModal(id) {
 
 async function showEditProductModal(id) {
     try {
+        
         const p = await apiRequest(`/products/${id}`);
         await setupClassSelect('editProductClassId');
         document.getElementById('editProductId').value = p.id;
@@ -398,7 +434,11 @@ async function showEditProductModal(id) {
         }
         await renderProductParamsForm('productParamsEditArea', p.класс_id, p.id);
         openModal('editProductModal');
+        
     } catch (e) { showToast(e.message, 'error'); }
+    console.log('part:', part);
+console.log('types:', types);
+console.log('matching:', types.find(t => t.id === part.part_type_id));
 }
 
 async function showEditHOTypeModal(id, name, parent) {
@@ -1259,7 +1299,8 @@ async function showSetContents(setId) {
             apiRequest(`/sets/${setId}/contents`),
             apiRequest('/products'),
         ]);
-        const productOpts = buildSelectOptions(products, 'id', 'наименование', '— выберите изделие —');
+        const productOpts = '<option value="">— выберите изделие —</option>'
+    + products.map(p => `<option value="${p.id}">${escapeHtml(p.наименование)}${p.артикул ? ' · ' + escapeHtml(p.артикул) : ''} [${escapeHtml(p.класс_название || '')}]</option>`).join('');
         let rows = '';
         for (const item of contents) {
             const sku = item.sku ? ` <code>${escapeHtml(item.sku)}</code>` : '';
@@ -1368,8 +1409,9 @@ loadEnumValuesAll = async function() {
     showLoading();
     try {
         const enums = await apiRequest('/enumerations');
+        const visible = enums.filter(e => e.name !== 'Тип детали');
         let html = `<div class="card"><div class="card-header"><i class="fas fa-tasks"></i> Значения перечислений<div class="float-end"><button class="btn btn-sm btn-primary" onclick="loadEnumValuesAll()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body">`;
-        for (const e of enums) {
+        for (const e of visible) {
             const values = await apiRequest(`/enumerations/${e.id}/values`);
             html += `<div class="card mb-3"><div class="card-body"><h5>${escapeHtml(e.name)} (ID: ${e.id})</h5>
                 <div class="d-flex flex-wrap gap-2 mb-2">

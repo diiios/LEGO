@@ -155,16 +155,18 @@ let adminCache = { themes: [], ages: [], partTypes: [], hoTypes: [], enums: [] }
 
         async function loadEnumerations() { showLoading(); try {
             const enums = await apiRequest('/enumerations');
+            const visible = enums.filter(e => e.name !== 'Тип детали');
             let html = `<div class="card"><div class="card-header"><i class="fas fa-list"></i> Перечисления<div class="float-end"><button class="btn btn-sm btn-success me-2" onclick="showCreateEnumerationModal()"><i class="fas fa-plus"></i> Создать</button><button class="btn btn-sm btn-primary" onclick="loadEnumerations()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body">`;
-            for (const e of enums) html += `<div class="card mb-3"><div class="card-body"><h5>${escapeHtml(e.name)}</h5><p>${e.description || ''}</p><small class="text-muted">Значений: ${e.values_count}, ID: ${e.id}</small><div class="mt-2"><button class="btn btn-sm btn-success" onclick="showAddEnumValueModal(${e.id})"><i class="fas fa-plus"></i> Добавить значение</button><button class="btn btn-sm btn-info" onclick="showEnumValues(${e.id})"><i class="fas fa-eye"></i> Значения</button><button class="btn btn-sm btn-warning" onclick="showEditEnumerationModal(${e.id}, '${escapeHtml(e.name)}', '${escapeHtml(e.description || '')}')"><i class="fas fa-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteEnumeration(${e.id})"><i class="fas fa-trash"></i></button></div></div></div>`;
+            for (const e of visible) html += `<div class="card mb-3"><div class="card-body"><h5>${escapeHtml(e.name)}</h5><p>${e.description || ''}</p><small class="text-muted">Значений: ${e.values_count}, ID: ${e.id}</small><div class="mt-2"><button class="btn btn-sm btn-success" onclick="showAddEnumValueModal(${e.id})"><i class="fas fa-plus"></i> Добавить значение</button><button class="btn btn-sm btn-info" onclick="showEnumValues(${e.id})"><i class="fas fa-eye"></i> Значения</button><button class="btn btn-sm btn-warning" onclick="showEditEnumerationModal(${e.id}, '${escapeHtml(e.name)}', '${escapeHtml(e.description || '')}')"><i class="fas fa-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteEnumeration(${e.id})"><i class="fas fa-trash"></i></button></div></div></div>`;
             html += `</div></div>`;
             document.getElementById('content').innerHTML = html;
         } catch(e) { showError(e.message); } }
 
         async function loadEnumValuesAll() { showLoading(); try {
             const enums = await apiRequest('/enumerations');
+            const visible = enums.filter(e => e.name !== 'Тип детали');
             let html = `<div class="card"><div class="card-header"><i class="fas fa-tasks"></i> Значения перечислений<div class="float-end"><button class="btn btn-sm btn-primary" onclick="loadEnumValuesAll()"><i class="fas fa-sync-alt"></i> Обновить</button></div></div><div class="card-body">`;
-            for (const e of enums) {
+            for (const e of visible) {
                 const values = await apiRequest(`/enumerations/${e.id}/values`);
                 html += `<div class="card mb-3"><div class="card-body"><h5>${escapeHtml(e.name)} (ID: ${e.id})</h5><div class="table-responsive"><table class="table table-sm"><thead><tr><th>ID</th><th>Значение</th><th>Порядок</th><th>Действия</th></tr></thead><tbody>`;
                 for (const v of values) html += `<tr><td>${v.id}</td><td>${escapeHtml(v.value)}</td><td>${v.sort_order}</td><td class="action-buttons"><button class="btn btn-sm btn-warning" onclick="showEditEnumValueModal(${v.id}, ${e.id}, '${escapeHtml(v.value)}', ${v.sort_order})"><i class="fas fa-edit"></i></button><button class="btn btn-sm btn-danger" onclick="deleteEnumValue(${v.id})"><i class="fas fa-trash"></i></button></td></tr>`;
