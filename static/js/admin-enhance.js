@@ -733,6 +733,77 @@ async function updateHORole() {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
+async function loadReorderChildren() {
+    const parentId = getVal('reorderParentId');
+    const box = document.getElementById('reorderChildrenList');
+    if (!parentId || !box) return;
+    
+    const cats = await apiRequest('/categories');
+    const children = cats.filter(c => c.parent_id === parseInt(parentId, 10));
+    
+    if (!children.length) {
+        box.innerHTML = '<div class="alert alert-info small">У этого узла нет прямых потомков.</div>';
+        return;
+    }
+    
+    children.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+    
+    let html = `<div class="table-responsive"><table class="table table-sm table-bordered">
+        <thead><tr><th>Порядок</th><th>Название</th><th>Тип</th><th>ID</th></tr></thead><tbody>`;
+    children.forEach((c, idx) => {
+        html += `<tr>
+            <td style="width:80px"><input type="number" class="form-control form-control-sm reorder-input" 
+                data-child-id="${c.id}" value="${idx + 1}" min="1" max="${children.length}"></td>
+            <td>${escapeHtml(c.name)}</td>
+            <td><span class="badge bg-secondary">${c.node_type}</span></td>
+            <td>${c.id}</td>
+        </tr>`;
+    });
+    html += `</tbody></table></div>`;
+    box.innerHTML = html;
+}
+
+async function reorderCategoryChildren() {
+    const parentId = getVal('reorderParentId');
+    if (!parentId) return showToast('Выберите родительский узел', 'error');
+    
+    const inputs = [...document.querySelectorAll('.reorder-input')];
+    if (!inputs.length) return showToast('Нет потомков для сортировки', 'error');
+    
+    // Валидация
+    const orders = inputs.map(el => parseInt(el.value, 10));
+    if (orders.some(o => isNaN(o) || o < 1)) {
+        return showToast('Все порядковые номера должны быть положительными числами', 'error');
+    }
+    const unique = new Set(orders);
+    if (unique.size !== orders.length) {
+        return showToast('Порядковые номера не должны повторяться', 'error');
+    }
+    
+    const ordered = inputs
+        .map(el => ({ id: parseInt(el.dataset.childId, 10), order: parseInt(el.value, 10) }))
+        .sort((a, b) => a.order - b.order)
+        .map(x => x.id);
+    
+    // Проверка, что ordered не пуст
+    if (!ordered.length) {
+        return showToast('Не удалось сформировать список ID потомков', 'error');
+    }
+    
+    try {
+        await apiRequest(`/categories/${parentId}/reorder`, 'PUT', { ordered_child_ids: ordered });
+        showToast('Порядок потомков сохранён');
+        
+        await loadReorderChildren();  // обновляем таблицу
+        
+        // Сбрасываем кэш категорий
+        if (typeof REF_CACHE !== 'undefined') REF_CACHE.categories = null;
+        
+        // НЕ вызываем loadTree() — остаёмся в текущем разделе
+    } catch (e) {
+        showToast(e.message, 'error');
+    }
+}
 async function addHORole() {
     if (!runValidation([() => V.text('newRoleName', 'Название роли')])) return;
     const typeId = document.getElementById('currentHOTypeId').value;
@@ -759,8 +830,6 @@ async function loadClassifierTools() {
                 <div class="card-body">
                     <div class="row g-3 mb-3">
                         <div class="col-md-6"><label class="form-label">Узел</label><select class="form-select" id="toolNodeId">${opts}</select></div>
-                        <div class="col-md-3"><label class="form-label">Базовая ед. изм. (ID)</label><input type="number" class="form-control" id="toolBaseUnit" min="1"></div>
-                        <div class="col-md-3 d-flex align-items-end"><button class="btn btn-primary w-100" onclick="setClassifierBaseUnit()"><i class="fas fa-save"></i> Установить</button></div>
                     </div>
                     <div class="d-flex flex-wrap gap-2 mb-3">
                         <button class="btn btn-outline-primary" onclick="showCategoryInfo('descendants')"><i class="fas fa-sitemap"></i> Потомки</button>
@@ -778,13 +847,17 @@ async function loadClassifierTools() {
                         </div>
                     </div>
                     <div class="border-top pt-3 mt-3">
-                        <h6>Изменить порядок потомков</h6>
-                        <div class="row g-2">
-                            <div class="col-md-4"><select class="form-select" id="reorderParentId">${opts}</select></div>
-                            <div class="col-md-6"><input type="text" class="form-control" id="reorderChildIds" placeholder="ID потомков через запятую: 12, 14, 13"></div>
-                            <div class="col-md-2"><button class="btn btn-primary w-100" onclick="reorderCategoryChildren()"><i class="fas fa-sort"></i> Сохранить</button></div>
-                        </div>
-                    </div>
+    <h6>Изменить порядок потомков</h6>
+    <p class="form-hint small">Выберите узел — список его прямых детей появится автоматически. Перетащите или отредактируйте порядковые номера.</p>
+    <div class="row g-2 mb-2">
+        <div class="col-md-5">
+            <label class="form-label">Родительский узел</label>
+            <select class="form-select" id="reorderParentId" onchange="loadReorderChildren()">${opts}</select>
+        </div>
+    </div>
+    <div id="reorderChildrenList" class="mb-2"></div>
+    <button class="btn btn-primary" onclick="reorderCategoryChildren()"><i class="fas fa-sort"></i> Сохранить порядок</button>
+</div>
                     <div id="classifierToolsResult" class="mt-3"></div>
                 </div>
             </div>`;
@@ -804,9 +877,28 @@ async function setClassifierBaseUnit() {
 async function showCategoryInfo(kind) {
     const nodeId = getVal('toolNodeId');
     if (!nodeId) return showToast('Выберите узел', 'error');
-    const titleMap = { descendants: 'Потомки узла', ancestors: 'Родители узла', terminals: 'Терминальные классы' };
+    const titleMap = {
+        descendants: 'Прямые потомки (дети) узла',
+        ancestors: 'Родители узла',
+        terminals: 'Терминальные классы'
+    };
     try {
-        const rows = await apiRequest(`/categories/${nodeId}/${kind}`);
+        let rows;
+        if (kind === 'descendants') {
+            // Берём только прямых детей из уже загруженного списка категорий
+            const cats = await apiRequest('/categories');
+            rows = cats
+                .filter(c => c.parent_id === parseInt(nodeId, 10))
+                .map(c => ({
+                    id: c.id,
+                    название: c.name,
+                    тип_элемента: c.node_type,
+                    родительский_id: c.parent_id,
+                    уровень: 1
+                }));
+        } else {
+            rows = await apiRequest(`/categories/${nodeId}/${kind}`);
+        }
         renderClassifierToolRows(titleMap[kind], rows);
     } catch (e) { showToast(e.message, 'error'); }
 }
@@ -862,16 +954,16 @@ async function createSubcategoryByParentName() {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
-async function reorderCategoryChildren() {
-    const parentId = getVal('reorderParentId');
-    const ids = (getVal('reorderChildIds') || '').split(',').map(x => parseInt(x.trim(), 10)).filter(Boolean);
-    if (!parentId || !ids.length) return showToast('Укажите родителя и список ID потомков', 'error');
-    try {
-        await apiRequest(`/categories/${parentId}/reorder`, 'PUT', { ordered_child_ids: ids });
-        showToast('Порядок потомков сохранён');
-        loadTree();
-    } catch (e) { showToast(e.message, 'error'); }
-}
+// async function reorderCategoryChildren() {
+//     const parentId = getVal('reorderParentId');
+//     const ids = (getVal('reorderChildIds') || '').split(',').map(x => parseInt(x.trim(), 10)).filter(Boolean);
+//     if (!parentId || !ids.length) return showToast('Укажите родителя и список ID потомков', 'error');
+//     try {
+//         await apiRequest(`/categories/${parentId}/reorder`, 'PUT', { ordered_child_ids: ids });
+//         showToast('Порядок потомков сохранён');
+//         loadTree();
+//     } catch (e) { showToast(e.message, 'error'); }
+// }
 
 async function loadClassParametersAdmin() {
     showLoading();

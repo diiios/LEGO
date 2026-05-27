@@ -12,8 +12,33 @@ let productParamFilters = [];
 document.addEventListener('DOMContentLoaded', () => {
     initSidebarToggle();
     initGlobalSearch(onGlobalSearch);
-    loadHome();
     preloadReferences();
+
+    const savedPage = sessionStorage.getItem('userPage');
+    const pageMap = {
+        'loadHome': loadHome,
+        'loadClassifier': loadClassifier,
+        'loadSets': loadSets,
+        'loadParts': loadParts,
+        'loadMinifigures': loadMinifigures,
+        'loadProductsFilter': loadProductsFilter,
+    };
+    // Восстанавливаем активный пункт меню по сохранённому имени функции
+if (savedPage) {
+    // Ищем ссылку, у которой в атрибуте onclick есть сохранённое имя функции
+    const activeLink = Array.from(document.querySelectorAll('.nav-link')).find(link => {
+        const onclick = link.getAttribute('onclick');
+        return onclick && onclick.includes(savedPage);
+    });
+    if (activeLink) {
+        // Убираем active у всех ссылок
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        // Добавляем active найденной ссылке
+        activeLink.classList.add('active');
+    }
+}
+    const fn = savedPage && pageMap[savedPage] ? pageMap[savedPage] : loadHome;
+    fn();
 });
 
 async function preloadReferences() {
@@ -41,6 +66,7 @@ async function onGlobalSearch(q) {
 function navigateUser(ev, fn) {
     if (ev?.preventDefault) ev.preventDefault();
     if (ev?.currentTarget) setActiveNav(ev.currentTarget);
+    sessionStorage.setItem('userPage', fn.name);
     fn();
 }
 

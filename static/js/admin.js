@@ -467,7 +467,13 @@ function showEditPartTypeModal(id, name, level) {
         function getNodeIconEmoji(t){const i={'промежуточный':'📁','терминальный':'📄','набор':'🧩','тематика':'🏷️','возрастная_категория':'🎂','тип_детали':'⚙️','мини_фигурка':'🧸'}; return i[t]||'📦';}
         function getProductIconEmoji(t){const i={'set':'🧩','part':'🔧','minifigure':'🧸'}; return i[t]||'📦';}
 
-function navigateAdmin(ev, fn) { if (ev?.preventDefault) ev.preventDefault(); if (ev?.currentTarget) setActiveNav(ev.currentTarget); fn(); }
+function navigateAdmin(ev, fn) {
+    if (ev?.preventDefault) ev.preventDefault();
+    if (ev?.currentTarget) setActiveNav(ev.currentTarget);
+    // Сохраняем имя функции
+    sessionStorage.setItem('adminPage', fn.name);
+    fn();
+}
 async function preloadAdminRefs() { try { adminCache.themes = await apiRequest("/themes"); adminCache.ages = await apiRequest("/age-categories"); adminCache.partTypes = await apiRequest("/part-types"); adminCache.enums = await apiRequest("/enumerations"); } catch (_) {} }
 async function fillSetSelects(prefix) { await preloadAdminRefs(); const age = document.getElementById(prefix + "AgeId"); const theme = document.getElementById(prefix + "ThemeId"); if (age) age.outerHTML = `<select class="form-select mb-2" id="${prefix}AgeId">${buildSelectOptions(adminCache.ages, "id", "name")}</select>`; if (theme) theme.outerHTML = `<select class="form-select mb-2" id="${prefix}ThemeId">${buildSelectOptions(adminCache.themes, "id", "name")}</select>`; }
 
@@ -489,5 +495,44 @@ document.addEventListener("DOMContentLoaded", () => {
         html += `</tbody></table></div></div>`;
         document.getElementById('content').innerHTML = html;
     });
-    loadTree();
+    // loadTree();
+    // Восстанавливаем последний раздел
+    const savedPage = sessionStorage.getItem('adminPage');
+    const pageMap = {
+        'loadTree': loadTree,
+        'loadCategories': loadCategories,
+        'loadSets': loadSets,
+        'loadParts': loadParts,
+        'loadMinifigures': loadMinifigures,
+        'loadThemes': loadThemes,
+        'loadAgeCategories': loadAgeCategories,
+        'loadPartTypes': loadPartTypes,
+        'loadParameters': loadParameters,
+        'loadClassParametersAdmin': loadClassParametersAdmin,
+        'loadProducts': loadProducts,
+        'loadEnumerations': loadEnumerations,
+        'loadEnumValuesAll': loadEnumValuesAll,
+        'loadHOTypes': loadHOTypes,
+        'loadHORoles': loadHORoles,
+        'loadSubjects': loadSubjects,
+        'loadHOOps': loadHOOps,
+        'loadClassifierTools': loadClassifierTools,
+    };
+
+    // Восстанавливаем активный пункт меню по сохранённому имени функции
+if (savedPage) {
+    // Ищем ссылку, у которой в атрибуте onclick есть сохранённое имя функции
+    const activeLink = Array.from(document.querySelectorAll('.nav-link')).find(link => {
+        const onclick = link.getAttribute('onclick');
+        return onclick && onclick.includes(savedPage);
+    });
+    if (activeLink) {
+        // Убираем active у всех ссылок
+        document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
+        // Добавляем active найденной ссылке
+        activeLink.classList.add('active');
+    }
+}
+    const fn = savedPage && pageMap[savedPage] ? pageMap[savedPage] : loadTree;
+    fn();
 });
