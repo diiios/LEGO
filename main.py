@@ -76,6 +76,13 @@ classifier = LegoClassifier(engine)
 async def startup_event():
     Base.metadata.create_all(bind=engine)
     with engine.begin() as conn:
+        # Задание 1.5: create_all не добавляет колонки в уже существующие таблицы,
+        # поэтому новое поле изделия добавляем вручную (если его ещё нет)
+        conn.execute(text("""
+            ALTER TABLE "изделие"
+            ADD COLUMN IF NOT EXISTS "базовое_изделие_id" INTEGER
+            REFERENCES "изделие"(id) ON DELETE SET NULL
+        """))
         conn.execute(text("""
             DO $$
             DECLARE r record;

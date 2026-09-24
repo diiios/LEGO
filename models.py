@@ -204,10 +204,13 @@ class Product(Base):
     наименование = Column(String(200), nullable=False)
     артикул = Column(String(50), unique=True, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+    # Задание 1.5: ссылка на базовое изделие (заполнено только у модификаций; MODIF в ERD)
+    базовое_изделие_id = Column(Integer, ForeignKey("изделие.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     class_node = relationship("Classificator", foreign_keys=[класс_id])
     parameter_values = relationship("ParameterValue", back_populates="product", cascade="all, delete-orphan")
+    base_product = relationship("Product", remote_side=[id], foreign_keys=[базовое_изделие_id])
 
 
 class ParameterValue(Base):
@@ -345,4 +348,58 @@ class HOItem(Base):
     сумма = Column(Float, nullable=False)   # количество * цена
 
     operation = relationship("HOOperation", back_populates="items")
+    product = relationship("Product")
+
+
+# ========== НОВЫЕ ТАБЛИЦЫ ДЛЯ ЗАДАНИЯ 1.5 (СПЕЦИФИКАЦИЯ ИЗДЕЛИЙ, BOM) ==========
+
+class UnitOfMeasure(Base):
+    """Единица измерения (EI в ERD): шт, г, кг, м ..."""
+    __tablename__ = "единица_измерения"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    код = Column(String(10), nullable=True)                           # код по ОКЕИ, напр. "796" для шт
+    обозначение = Column(String(20), nullable=False, unique=True)    # "шт"
+    имя = Column(String(100), nullable=False)                        # "Штука"
+
+
+class BOMItem(Base):
+    """Позиция материальной спецификации (SPEC_PROD в ERD):
+    изделие (FOR_PROD) содержит компонент (USE_EL) в количестве
+    «расход» на «для_количества» штук изделия."""
+    __tablename__ = "позиция_спецификации"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    изделие_id = Column(Integer, ForeignKey("изделие.id", ondelete="CASCADE"), nullable=False)    # что собираем
+    компонент_id = Column(Integer, ForeignKey("изделие.id", ondelete="CASCADE"), nullable=False)  # из чего
+    номер = Column(Integer, default=0)                       # порядок строки (NUM)
+    расход = Column(Float, nullable=False)                   # сколько компонента (Q); 0 = исключить из базы
+    для_количества = Column(Float, nullable=False, default=1)  # на сколько штук изделия задан расход
+    ед_изм_id = Column(Integer, ForeignKey("единица_измерения.id", ondelete="SET NULL"), nullable=True)
+    флаг_базы = Column(Integer, default=1)                   # 1 = общая часть, наследуется модификациями (FLAG)
+
+    __table_args__ = (
+        UniqueConstraint("изделие_id", "компонент_id", name="uq_спецификация_изделие_компонент"),
+        CheckConstraint("расход >= 0", name="ck_спецификация_расход"),
+        CheckConstraint("для_количества > 0", name="ck_спецификация_для_количества"),
+        CheckConstraint("изделие_id <> компонент_id", name="ck_спецификация_не_сам_в_себе"),
+    )
+
+    product = relationship("Product", foreign_keys=[изделие_id])
+    component = relationship("Product", foreign_keys=[компонент_id])
+    unit = relationship("UnitOfMeasure")
+
+
+class SpecChange(Base):
+    """Изменение спецификации (журнал): что, когда и почему изменено"""
+    __tablename__ = "изменение_спецификации"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    изделие_id = Column(Integer, ForeignKey("изделие.id", ondelete="CASCADE"), nullable=False)
+    дата = Column(DateTime, default=datetime.utcnow)
+    действие = Column(String(30), nullable=False)   # ДОБАВЛЕНИЕ / ИЗМЕНЕНИЕ / УДАЛЕНИЕ / МОДИФИКАЦИЯ / ПРОЧЕЕ
+    описание = Column(Text, nullable=False)
+    было = Column(Text, nullable=True)
+    стало = Column(Text, nullable=True)
+
     product = relationship("Product")
