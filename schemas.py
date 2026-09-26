@@ -384,3 +384,27 @@ class HOFilter(BaseModel):
     дата_до: Optional[datetime] = None
     сумма_мин: Optional[float] = None
     сумма_макс: Optional[float] = None
+
+
+# ========== СХЕМЫ ДЛЯ СПЕЦИФИКАЦИЙ ИЗДЕЛИЙ (ЗАДАНИЕ 1.5) ==========
+
+class UnitCreate(BaseModel):
+    обозначение: str                  # "шт"
+    имя: str                          # "Штука"
+    код: Optional[str] = None         # код по ОКЕИ, напр. "796"
+
+class BOMItemCreate(BaseModel):
+    компонент_id: int                 # что добавляем в состав
+    расход: float                     # сколько компонента
+    для_количества: float = 1         # на сколько штук изделия
+    ед_изм_id: Optional[int] = None
+    флаг_базы: bool = True            # True = общая часть, наследуется модификациями
+    номер: Optional[int] = None       # порядок строки; если не указан — в конец
+
+class BOMItemUpdate(BaseModel):
+    """Все поля необязательные: меняются только переданные"""
+    расход: Optional[float] = None
+    для_количества: Optional[float] = None
+    ед_изм_id: Optional[int] = None
+    флаг_базы: Optional[bool] = None
+    номер: Optional[int] = None

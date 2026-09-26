@@ -1203,3 +1203,62 @@ def get_parameter(param_id: int, db: Session = Depends(get_db)):
         "единица_измерения": param.единица_измерения,
         "перечисление_id": param.перечисление_id
     }
+
+
+# ==================== СПЕЦИФИКАЦИИ ИЗДЕЛИЙ (ЗАДАНИЕ 1.5) ====================
+# Ответ — обычный словарь (а не OperationResult), чтобы не терялись поля item_id / unit_id.
+
+TAG_BOM = "📐 Спецификации (работа 5)"
+
+
+def _raise_if_failed(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Если метод вернул success=False — отдаём клиенту ошибку 400 с понятным текстом"""
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("message"))
+    return result
+
+
+# --- Единицы измерения ---
+@app.get("/units", tags=[TAG_BOM])
+def get_units(db: Session = Depends(get_db)):
+    """Список единиц измерения"""
+    return classifier.get_all_units(db)
+
+@app.post("/units", tags=[TAG_BOM])
+def create_unit(data: UnitCreate, db: Session = Depends(get_db)):
+    """Добавить единицу измерения (шт, г, кг ...)"""
+    return _raise_if_failed(classifier.add_unit(db, data.обозначение, data.имя, data.код))
+
+
+# --- Строки спецификации ---
+@app.get("/products/{product_id}/bom", tags=[TAG_BOM])
+def get_product_bom(product_id: int, db: Session = Depends(get_db)):
+    """Состав изделия: собственные строки, один уровень"""
+    if not db.query(Product).filter(Product.id == product_id).first():
+        raise HTTPException(status_code=404, detail="Изделие не найдено")
+    return classifier.get_spec(db, product_id)
+
+@app.post("/products/{product_id}/bom", tags=[TAG_BOM])
+def add_product_bom_item(product_id: int, data: BOMItemCreate, db: Session = Depends(get_db)):
+    """Добавить компонент в состав изделия (проверка циклов, запись в журнал)"""
+    return _raise_if_failed(classifier.add_bom_item(
+        db, product_id, data.компонент_id, data.расход, data.для_количества,
+        data.ед_изм_id, data.флаг_базы, data.номер))
+
+@app.put("/bom-items/{item_id}", tags=[TAG_BOM])
+def update_bom_item(item_id: int, data: BOMItemUpdate, db: Session = Depends(get_db)):
+    """Изменить строку состава (меняются только переданные поля)"""
+    return _raise_if_failed(classifier.update_bom_item(
+        db, item_id, data.расход, data.для_количества, data.ед_изм_id, data.флаг_базы, data.номер))
+
+@app.delete("/bom-items/{item_id}", tags=[TAG_BOM])
+def delete_bom_item(item_id: int, db: Session = Depends(get_db)):
+    """Удалить строку состава"""
+    return _raise_if_failed(classifier.delete_bom_item(db, item_id))
+
+
+# --- Журнал изменений ---
+@app.get("/products/{product_id}/changes", tags=[TAG_BOM])
+def get_product_changes(product_id: int, db: Session = Depends(get_db)):
+    """Журнал изменений спецификации изделия (новые сверху)"""
+    return classifier.get_spec_changes(db, product_id)

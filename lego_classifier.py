@@ -7,7 +7,8 @@ from datetime import datetime
 from models import (Classificator, Theme, AgeCategory, PartType, Set, Part, Minifigure,
                     SetPart, SetMinifigure, Enumeration, EnumValue, Parameter, ParameterClass,
                     Product, ParameterValue, HOType, HORole, HOParameter, Subject, HOOperation,
-                    HORoleAssignment, HOParameterValue, HOItem)
+                    HORoleAssignment, HOParameterValue, HOItem,
+                    UnitOfMeasure, BOMItem, SpecChange)
 
 class LegoClassifier:
     def __init__(self, engine):
@@ -2172,3 +2173,269 @@ class LegoClassifier:
             sort_node(tree)
         
         return trees
+
+
+    # ========== СПЕЦИФИКАЦИИ ИЗДЕЛИЙ (ЗАДАНИЕ 1.5) ==========
+
+    # ----- Единицы измерения -----
+
+    def add_unit(self, db: Session, обозначение: str, имя: str, код: str = None) -> Dict[str, Any]:
+        """Добавить единицу измерения (шт, г, кг ...)"""
+        обозначение = (обозначение or "").strip()
+        имя = (имя or "").strip()
+        if not обозначение or not имя:
+            return {"success": False, "message": "Обозначение и имя единицы измерения обязательны"}
+        if db.query(UnitOfMeasure).filter(UnitOfMeasure.обозначение == обозначение).first():
+            return {"success": False, "message": f"Единица измерения '{обозначение}' уже существует"}
+        try:
+            unit = UnitOfMeasure(обозначение=обозначение, имя=имя, код=код)
+            db.add(unit)
+            db.commit()
+            db.refresh(unit)
+            return {"success": True, "message": "Единица измерения добавлена", "unit_id": unit.id}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
+    def get_all_units(self, db: Session) -> List[Dict[str, Any]]:
+        """Список единиц измерения"""
+        units = db.query(UnitOfMeasure).order_by(UnitOfMeasure.id).all()
+        return [{"id": u.id, "код": u.код, "обозначение": u.обозначение, "имя": u.имя} for u in units]
+
+    # ----- Вспомогательные методы -----
+
+    def _bom_item_text(self, item: BOMItem) -> str:
+        """Строка спецификации текстом — для журнала изменений.
+        Пример: 'Башня × 2 шт на 1 (база)'"""
+        comp = item.component.наименование if item.component else f"изделие #{item.компонент_id}"
+        unit = f" {item.unit.обозначение}" if item.unit else ""
+        base = "база" if item.флаг_базы else "только это изделие"
+        return f"{comp} × {item.расход:g}{unit} на {item.для_количества:g} ({base})"
+
+    def _log_change(self, db: Session, изделие_id: int, действие: str, описание: str,
+                    было: str = None, стало: str = None) -> None:
+        """Записать изменение спецификации в журнал.
+        commit НЕ делает — запись сохраняется вместе с самим изменением (одной транзакцией)."""
+        db.add(SpecChange(изделие_id=изделие_id, действие=действие, описание=описание,
+                          было=было, стало=стало))
+
+    def _own_component_ids(self, db: Session, product_id: int) -> set:
+        """ID компонентов из собственных строк спецификации изделия (один уровень)"""
+        rows = db.query(BOMItem.компонент_id).filter(BOMItem.изделие_id == product_id).all()
+        return {r[0] for r in rows}
+
+    def _bom_children_for_check(self, db: Session, product_id: int) -> set:
+        """Компоненты изделия с учётом наследования от базового изделия.
+        Для проверки циклов берём «с запасом»: все строки самого изделия
+        и всех его базовых изделий по цепочке."""
+        ids = set(self._own_component_ids(db, product_id))
+        seen = {product_id}
+        product = db.query(Product).filter(Product.id == product_id).first()
+        base_id = product.базовое_изделие_id if product else None
+        while base_id and base_id not in seen:
+            seen.add(base_id)
+            ids |= self._own_component_ids(db, base_id)
+            base = db.query(Product).filter(Product.id == base_id).first()
+            base_id = base.базовое_изделие_id if base else None
+        return ids
+
+    def _bom_reachable(self, db: Session, start_id: int) -> set:
+        """Все изделия, входящие в start_id на любой глубине (обход в ширину).
+        Множество visited гарантирует остановку, даже если в данных уже есть цикл."""
+        visited = set()
+        queue = list(self._bom_children_for_check(db, start_id))
+        while queue:
+            pid = queue.pop()
+            if pid in visited:
+                continue
+            visited.add(pid)
+            queue.extend(self._bom_children_for_check(db, pid) - visited)
+        return visited
+
+    def _modification_family(self, db: Session, product_id: int) -> set:
+        """Изделие + все его модификации (и модификации модификаций)."""
+        family = {product_id}
+        queue = [product_id]
+        while queue:
+            pid = queue.pop()
+            mods = db.query(Product.id).filter(Product.базовое_изделие_id == pid).all()
+            for (mid,) in mods:
+                if mid not in family:
+                    family.add(mid)
+                    queue.append(mid)
+        return family
+
+    def check_bom_cycle(self, db: Session, изделие_id: int, компонент_id: int) -> bool:
+        """True, если добавление «компонент в изделие» создаст цикл.
+        Цикл будет, если изделие (или любая его модификация, которая унаследует
+        эту строку) уже входит в компонент на какой-либо глубине."""
+        targets = self._modification_family(db, изделие_id)
+        if компонент_id in targets:
+            return True
+        return bool(self._bom_reachable(db, компонент_id) & targets)
+
+    def _validate_bom_numbers(self, product: Product, расход: Any, для_количества: Any):
+        """Проверка чисел строки спецификации. Возвращает (ошибка | None, расход, для_количества)"""
+        try:
+            расход = float(расход)
+            для_количества = float(для_количества)
+        except (TypeError, ValueError):
+            return "Расход и «для количества» должны быть числами", None, None
+        if расход < 0:
+            return "Расход не может быть отрицательным", None, None
+        if для_количества <= 0:
+            return "«Для количества» должно быть больше 0", None, None
+        if расход == 0 and not product.базовое_изделие_id:
+            return ("Нулевой расход допустим только у модификации "
+                    "(так исключается компонент базового изделия)"), None, None
+        return None, расход, для_количества
+
+    # ----- Строки спецификации: добавить / изменить / удалить / показать -----
+
+    def add_bom_item(self, db: Session, изделие_id: int, компонент_id: int, расход: float,
+                     для_количества: float = 1, ед_изм_id: int = None,
+                     флаг_базы: bool = True, номер: int = None) -> Dict[str, Any]:
+        """Добавить компонент в спецификацию изделия (с проверкой цикла и записью в журнал)"""
+        product = db.query(Product).filter(Product.id == изделие_id).first()
+        if not product:
+            return {"success": False, "message": f"Изделие с id {изделие_id} не найдено"}
+        component = db.query(Product).filter(Product.id == компонент_id).first()
+        if not component:
+            return {"success": False, "message": f"Компонент с id {компонент_id} не найден"}
+        if изделие_id == компонент_id:
+            return {"success": False, "message": "Изделие не может входить в собственный состав"}
+
+        error, расход, для_количества = self._validate_bom_numbers(product, расход, для_количества)
+        if error:
+            return {"success": False, "message": error}
+
+        if ед_изм_id is not None and not db.query(UnitOfMeasure).filter(UnitOfMeasure.id == ед_изм_id).first():
+            return {"success": False, "message": f"Единица измерения с id {ед_изм_id} не найдена"}
+
+        exists = db.query(BOMItem).filter(BOMItem.изделие_id == изделие_id,
+                                          BOMItem.компонент_id == компонент_id).first()
+        if exists:
+            return {"success": False,
+                    "message": f"'{component.наименование}' уже есть в составе '{product.наименование}'. "
+                               f"Измените существующую строку (id {exists.id})"}
+
+        if self.check_bom_cycle(db, изделие_id, компонент_id):
+            return {"success": False,
+                    "message": f"Цикл: '{product.наименование}' уже входит в состав "
+                               f"'{component.наименование}' (напрямую или через узлы/модификации)"}
+
+        if номер is None:
+            max_num = db.query(func.coalesce(func.max(BOMItem.номер), 0)).filter(
+                BOMItem.изделие_id == изделие_id).scalar()
+            номер = (max_num or 0) + 1
+
+        try:
+            item = BOMItem(изделие_id=изделие_id, компонент_id=компонент_id, номер=номер,
+                           расход=расход, для_количества=для_количества, ед_изм_id=ед_изм_id,
+                           флаг_базы=1 if флаг_базы else 0)
+            db.add(item)
+            db.flush()          # получаем item.id и связи, но ещё не фиксируем
+            db.refresh(item)
+            self._log_change(db, изделие_id, "ДОБАВЛЕНИЕ",
+                             f"Добавлен компонент '{component.наименование}'",
+                             стало=self._bom_item_text(item))
+            db.commit()
+            return {"success": True, "message": "Компонент добавлен в спецификацию", "item_id": item.id}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
+    def update_bom_item(self, db: Session, item_id: int, расход: float = None,
+                        для_количества: float = None, ед_изм_id: int = None,
+                        флаг_базы: bool = None, номер: int = None) -> Dict[str, Any]:
+        """Изменить строку спецификации. Меняются только переданные поля.
+        Компонент поменять нельзя — для этого удалить строку и добавить новую."""
+        item = db.query(BOMItem).filter(BOMItem.id == item_id).first()
+        if not item:
+            return {"success": False, "message": f"Строка спецификации с id {item_id} не найдена"}
+        product = item.product
+
+        new_расход = item.расход if расход is None else расход
+        new_для = item.для_количества if для_количества is None else для_количества
+        error, new_расход, new_для = self._validate_bom_numbers(product, new_расход, new_для)
+        if error:
+            return {"success": False, "message": error}
+        if ед_изм_id is not None and not db.query(UnitOfMeasure).filter(UnitOfMeasure.id == ед_изм_id).first():
+            return {"success": False, "message": f"Единица измерения с id {ед_изм_id} не найдена"}
+
+        было = self._bom_item_text(item)
+        try:
+            item.расход = new_расход
+            item.для_количества = new_для
+            if ед_изм_id is not None:
+                item.ед_изм_id = ед_изм_id
+            if флаг_базы is not None:
+                item.флаг_базы = 1 if флаг_базы else 0
+            if номер is not None:
+                item.номер = номер
+            db.flush()
+            db.refresh(item)
+            стало = self._bom_item_text(item)
+            if стало == было and номер is None:
+                db.rollback()
+                return {"success": True, "message": "Изменений нет"}
+            self._log_change(db, item.изделие_id, "ИЗМЕНЕНИЕ",
+                             f"Изменена строка компонента '{item.component.наименование}'",
+                             было=было, стало=стало)
+            db.commit()
+            return {"success": True, "message": "Строка спецификации изменена"}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
+    def delete_bom_item(self, db: Session, item_id: int) -> Dict[str, Any]:
+        """Удалить строку спецификации (с записью в журнал)"""
+        item = db.query(BOMItem).filter(BOMItem.id == item_id).first()
+        if not item:
+            return {"success": False, "message": f"Строка спецификации с id {item_id} не найдена"}
+        try:
+            было = self._bom_item_text(item)
+            comp_name = item.component.наименование if item.component else ""
+            изделие_id = item.изделие_id
+            db.delete(item)
+            self._log_change(db, изделие_id, "УДАЛЕНИЕ", f"Удалён компонент '{comp_name}'", было=было)
+            db.commit()
+            return {"success": True, "message": "Строка спецификации удалена"}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
+    def get_spec(self, db: Session, изделие_id: int) -> List[Dict[str, Any]]:
+        """Собственные строки спецификации изделия (один уровень, без наследования)"""
+        items = db.query(BOMItem).filter(BOMItem.изделие_id == изделие_id).order_by(
+            BOMItem.номер, BOMItem.id).all()
+        result = []
+        for it in items:
+            comp = it.component
+            result.append({
+                "id": it.id,
+                "номер": it.номер,
+                "компонент_id": it.компонент_id,
+                "компонент": comp.наименование if comp else None,
+                "артикул": comp.артикул if comp else None,
+                "класс_компонента": comp.class_node.название if comp and comp.class_node else None,
+                "расход": it.расход,
+                "для_количества": it.для_количества,
+                "ед_изм_id": it.ед_изм_id,
+                "ед_изм": it.unit.обозначение if it.unit else None,
+                "флаг_базы": it.флаг_базы,
+            })
+        return result
+
+    def get_spec_changes(self, db: Session, изделие_id: int) -> List[Dict[str, Any]]:
+        """Журнал изменений спецификации изделия (новые сверху)"""
+        changes = db.query(SpecChange).filter(SpecChange.изделие_id == изделие_id).order_by(
+            SpecChange.дата.desc(), SpecChange.id.desc()).all()
+        return [{
+            "id": ch.id,
+            "дата": ch.дата.isoformat() if ch.дата else None,
+            "действие": ch.действие,
+            "описание": ch.описание,
+            "было": ch.было,
+            "стало": ch.стало,
+        } for ch in changes]
