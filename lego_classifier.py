@@ -2202,6 +2202,13 @@ class LegoClassifier:
         units = db.query(UnitOfMeasure).order_by(UnitOfMeasure.id).all()
         return [{"id": u.id, "код": u.код, "обозначение": u.обозначение, "имя": u.имя} for u in units]
 
+    def _unit_name(self, db: Session, unit_id: Optional[int]) -> Optional[str]:
+        """Обозначение ЕИ по id (для вывода)"""
+        if unit_id is None:
+            return None
+        u = db.query(UnitOfMeasure).filter(UnitOfMeasure.id == unit_id).first()
+        return u.обозначение if u else None
+
     # ----- Вспомогательные методы -----
 
     def _bom_item_text(self, item: BOMItem) -> str:
@@ -2439,3 +2446,138 @@ class LegoClassifier:
             "было": ch.было,
             "стало": ch.стало,
         } for ch in changes]
+
+    # ----- FIND_BOM и CALC_BOM (шаг 3) -----
+    # ЕИ здесь — только подпись строки: количества НЕ пересчитываются между единицами.
+    # Договорённость: один и тот же компонент во всех спецификациях записывается в одной ЕИ.
+
+    def _bom_lines_for_calc(self, db: Session, product_id: int) -> List[BOMItem]:
+        """Строки состава, по которым идёт обход дерева.
+        Сейчас — собственные строки изделия. На шаге 4 здесь будет
+        «действующий состав» с учётом модификаций — FIND_BOM/CALC_BOM менять не придётся."""
+        return db.query(BOMItem).filter(BOMItem.изделие_id == product_id).order_by(
+            BOMItem.номер, BOMItem.id).all()
+
+    def find_bom(self, db: Session, изделие_id: int, количество: float = 1,
+                 max_depth: int = 50) -> Dict[str, Any]:
+        """FIND_BOM: полный состав изделия на всю глубину.
+        Количества перемножаются по пути: кол_потомка = кол_родителя × расход / для_количества."""
+        root = db.query(Product).filter(Product.id == изделие_id).first()
+        if not root:
+            return {"success": False, "message": f"Изделие с id {изделие_id} не найдено"}
+        try:
+            количество = float(количество)
+        except (TypeError, ValueError):
+            return {"success": False, "message": "Количество должно быть числом"}
+        if количество <= 0:
+            return {"success": False, "message": "Количество изделий должно быть больше 0"}
+
+        rows: List[Dict[str, Any]] = []
+        warnings: List[str] = []
+
+        def walk(product_id: int, qty_per_one: float, level: int, path_ids: List[int], path_names: List[str]):
+            if level > max_depth:
+                warnings.append(f"Достигнута максимальная глубина {max_depth} — обход остановлен")
+                return
+            for item in self._bom_lines_for_calc(db, product_id):
+                comp = item.component
+                if comp.id in path_ids:   # защита от цикла в данных
+                    warnings.append(f"Цикл в данных: {' › '.join(path_names + [comp.наименование])}")
+                    continue
+
+                qty = qty_per_one * item.расход / item.для_количества     # ← главное правило
+
+                rows.append({
+                    "уровень": level,
+                    "строка_id": item.id,
+                    "компонент_id": comp.id,
+                    "компонент": comp.наименование,
+                    "артикул": comp.артикул,
+                    "класс_id": comp.класс_id,
+                    "класс": comp.class_node.название if comp.class_node else None,
+                    "расход_по_строке": item.расход,
+                    "для_количества": item.для_количества,
+                    "ед_изм_id": item.ед_изм_id,
+                    "ед_изм": self._unit_name(db, item.ед_изм_id),
+                    "кол_на_1": round(qty, 6),
+                    "кол_на_N": round(qty * количество, 6),
+                    "флаг_базы": item.флаг_базы,
+                    "лист": not self._bom_lines_for_calc(db, comp.id),
+                    "путь": " › ".join(path_names + [comp.наименование]),
+                })
+                walk(comp.id, qty, level + 1, path_ids + [comp.id], path_names + [comp.наименование])
+
+        walk(root.id, 1.0, 1, [root.id], [root.наименование])
+        return {
+            "success": True,
+            "изделие_id": root.id,
+            "изделие": root.наименование,
+            "количество": количество,
+            "строки": rows,
+            "предупреждения": warnings,
+        }
+
+    def calc_bom(self, db: Session, изделие_id: int, количество: float = 1,
+                 класс_id: int = None) -> Dict[str, Any]:
+        """CALC_BOM: сводные нормы расхода — сколько каждого компонента нужно на N изделий.
+        Одинаковые компоненты из разных веток дерева складываются.
+        класс_id — отбор по классу (с учётом подклассов); без него — все компоненты."""
+        tree = self.find_bom(db, изделие_id, количество)
+        if not tree["success"]:
+            return tree
+
+        class_name = None
+        allowed = None
+        if класс_id is not None:
+            cls = db.query(Classificator).filter(Classificator.id == класс_id).first()
+            if not cls:
+                return {"success": False, "message": f"Класс с id {класс_id} не найден"}
+            class_name = cls.название
+            allowed = {класс_id} | {d["id"] for d in self.get_descendants(db, класс_id)}
+
+        totals: Dict[tuple, Dict[str, Any]] = {}
+        for r in tree["строки"]:
+            if allowed is not None and r["класс_id"] not in allowed:
+                continue
+            key = (r["компонент_id"], r["ед_изм_id"])     # складываем одинаковые компоненты
+            if key not in totals:
+                totals[key] = {
+                    "компонент_id": r["компонент_id"],
+                    "компонент": r["компонент"],
+                    "артикул": r["артикул"],
+                    "класс": r["класс"],
+                    "ед_изм": r["ед_изм"],
+                    "кол_на_1": 0.0,
+                    "вхождений": 0,
+                    "лист": r["лист"],
+                }
+            totals[key]["кол_на_1"] += r["кол_на_1"]
+            totals[key]["вхождений"] += 1
+
+        rows = []
+        for t in totals.values():
+            t["кол_на_N"] = round(t["кол_на_1"] * tree["количество"], 4)
+            t["кол_на_1"] = round(t["кол_на_1"], 4)
+            rows.append(t)
+        rows.sort(key=lambda x: ((x["класс"] or ""), x["компонент"]))
+
+        # Подсказка, если договорённость «одна ЕИ на компонент» где-то нарушена
+        warnings = list(tree["предупреждения"])
+        units_by_comp: Dict[int, set] = {}
+        for (cid, uid) in totals:
+            units_by_comp.setdefault(cid, set()).add(uid)
+        for cid, units in units_by_comp.items():
+            if len(units) > 1:
+                name = next(t["компонент"] for t in rows if t["компонент_id"] == cid)
+                warnings.append(f"'{name}' записан в спецификациях в разных ЕИ — выведен несколькими строками")
+
+        return {
+            "success": True,
+            "изделие_id": tree["изделие_id"],
+            "изделие": tree["изделие"],
+            "количество": tree["количество"],
+            "класс_id": класс_id,
+            "класс": class_name,
+            "строки": rows,
+            "предупреждения": warnings,
+        }

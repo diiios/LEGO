@@ -1262,3 +1262,16 @@ def delete_bom_item(item_id: int, db: Session = Depends(get_db)):
 def get_product_changes(product_id: int, db: Session = Depends(get_db)):
     """Журнал изменений спецификации изделия (новые сверху)"""
     return classifier.get_spec_changes(db, product_id)
+
+
+# --- FIND_BOM и CALC_BOM (шаг 3) ---
+@app.get("/products/{product_id}/bom/tree", tags=[TAG_BOM])
+def get_product_bom_tree(product_id: int, qty: float = 1, db: Session = Depends(get_db)):
+    """FIND_BOM: полный состав на всю глубину. qty — на сколько изделий считать"""
+    return _raise_if_failed(classifier.find_bom(db, product_id, qty))
+
+@app.get("/products/{product_id}/bom/calc", tags=[TAG_BOM])
+def get_product_bom_calc(product_id: int, qty: float = 1, class_id: Optional[int] = None,
+                         db: Session = Depends(get_db)):
+    """CALC_BOM: сводные нормы на qty изделий. class_id — только компоненты этого класса и подклассов"""
+    return _raise_if_failed(classifier.calc_bom(db, product_id, qty, class_id))
