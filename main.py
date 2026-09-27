@@ -1275,3 +1275,20 @@ def get_product_bom_calc(product_id: int, qty: float = 1, class_id: Optional[int
                          db: Session = Depends(get_db)):
     """CALC_BOM: сводные нормы на qty изделий. class_id — только компоненты этого класса и подклассов"""
     return _raise_if_failed(classifier.calc_bom(db, product_id, qty, class_id))
+
+
+# --- Модификации (шаг 4) ---
+@app.post("/products/{product_id}/modifications", tags=[TAG_BOM])
+def create_modification(product_id: int, data: ModificationCreate, db: Session = Depends(get_db)):
+    """CREATE_MODIFICATION: создать модификацию изделия product_id (строки базы не копируются)"""
+    return _raise_if_failed(classifier.create_modification(db, product_id, data.наименование, data.артикул))
+
+@app.get("/products/{product_id}/modifications", tags=[TAG_BOM])
+def get_modifications(product_id: int, db: Session = Depends(get_db)):
+    """Список модификаций изделия"""
+    return classifier.get_modifications(db, product_id)
+
+@app.get("/products/{product_id}/bom/effective", tags=[TAG_BOM])
+def get_effective_bom(product_id: int, db: Session = Depends(get_db)):
+    """Действующий состав (один уровень): у модификации — свои строки + унаследованные из базы"""
+    return _raise_if_failed(classifier.get_effective_spec(db, product_id))

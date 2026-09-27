@@ -408,3 +408,7 @@ class BOMItemUpdate(BaseModel):
     ед_изм_id: Optional[int] = None
     флаг_базы: Optional[bool] = None
     номер: Optional[int] = None
+
+class ModificationCreate(BaseModel):
+    наименование: str                 # "Звезда Смерти — Тёмная сторона"
+    артикул: Optional[str] = None     # "SET-75159-DS"

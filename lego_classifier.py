@@ -2315,6 +2315,9 @@ class LegoClassifier:
         error, расход, для_количества = self._validate_bom_numbers(product, расход, для_количества)
         if error:
             return {"success": False, "message": error}
+        if расход == 0 and компонент_id not in self._inherited_component_ids(db, изделие_id):
+            return {"success": False,
+                    "message": f"'{component.наименование}' не приходит из базового изделия — исключать нечего"}
 
         if ед_изм_id is not None and not db.query(UnitOfMeasure).filter(UnitOfMeasure.id == ед_изм_id).first():
             return {"success": False, "message": f"Единица измерения с id {ед_изм_id} не найдена"}
@@ -2367,6 +2370,9 @@ class LegoClassifier:
         error, new_расход, new_для = self._validate_bom_numbers(product, new_расход, new_для)
         if error:
             return {"success": False, "message": error}
+        if new_расход == 0 and item.компонент_id not in self._inherited_component_ids(db, item.изделие_id):
+            return {"success": False,
+                    "message": f"'{item.component.наименование}' не приходит из базового изделия — исключать нечего"}
         if ед_изм_id is not None and not db.query(UnitOfMeasure).filter(UnitOfMeasure.id == ед_изм_id).first():
             return {"success": False, "message": f"Единица измерения с id {ед_изм_id} не найдена"}
 
@@ -2452,11 +2458,9 @@ class LegoClassifier:
     # Договорённость: один и тот же компонент во всех спецификациях записывается в одной ЕИ.
 
     def _bom_lines_for_calc(self, db: Session, product_id: int) -> List[BOMItem]:
-        """Строки состава, по которым идёт обход дерева.
-        Сейчас — собственные строки изделия. На шаге 4 здесь будет
-        «действующий состав» с учётом модификаций — FIND_BOM/CALC_BOM менять не придётся."""
-        return db.query(BOMItem).filter(BOMItem.изделие_id == product_id).order_by(
-            BOMItem.номер, BOMItem.id).all()
+        """Строки состава, по которым идёт обход дерева в FIND_BOM / CALC_BOM.
+        Шаг 4: это «действующий состав» — у модификации сюда входят и строки базы."""
+        return [item for item, _src in self._effective_items(db, product_id)]
 
     def find_bom(self, db: Session, изделие_id: int, количество: float = 1,
                  max_depth: int = 50) -> Dict[str, Any]:
@@ -2502,6 +2506,7 @@ class LegoClassifier:
                     "кол_на_1": round(qty, 6),
                     "кол_на_N": round(qty * количество, 6),
                     "флаг_базы": item.флаг_базы,
+                    "из_базы": item.изделие_id != product_id,   # строка унаследована от базового изделия
                     "лист": not self._bom_lines_for_calc(db, comp.id),
                     "путь": " › ".join(path_names + [comp.наименование]),
                 })
@@ -2581,3 +2586,127 @@ class LegoClassifier:
             "строки": rows,
             "предупреждения": warnings,
         }
+
+    # ----- МОДИФИКАЦИИ (шаг 4) -----
+    # Модификация — изделие с заполненным базовое_изделие_id. Хранит только свои строки (отличия).
+    # Действующий состав = строки базы с флаг_базы = 1
+    #                      + свои строки (одинаковый компонент — своя строка заменяет базовую)
+    #                      − компоненты со своим расходом 0 (исключены).
+
+    def _effective_items(self, db: Session, product_id: int, _seen: set = None) -> List[tuple]:
+        """Действующий состав изделия: список пар (строка BOMItem, id изделия-источника).
+        Для обычного изделия — просто его строки. Для модификации — по правилам выше.
+        Работает по цепочке (модификация модификации)."""
+        _seen = set() if _seen is None else _seen
+        if product_id in _seen:          # защита от зацикленной цепочки баз
+            return []
+        _seen.add(product_id)
+
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product:
+            return []
+        own = db.query(BOMItem).filter(BOMItem.изделие_id == product_id).order_by(
+            BOMItem.номер, BOMItem.id).all()
+
+        result: Dict[int, tuple] = {}    # компонент_id → (строка, источник); dict сохраняет порядок
+        if product.базовое_изделие_id:
+            for item, src in self._effective_items(db, product.базовое_изделие_id, _seen):
+                if item.флаг_базы:       # наследуются только строки общей части (флаг 1)
+                    result[item.компонент_id] = (item, src)
+        for item in own:                 # свои строки: заменяют базовые или добавляются в конец
+            result[item.компонент_id] = (item, product_id)
+
+        return [(item, src) for item, src in result.values() if item.расход > 0]   # 0 = исключено
+
+    def _inherited_component_ids(self, db: Session, product_id: int) -> set:
+        """Компоненты, которые изделие получает от своей базы (пусто, если это не модификация)"""
+        product = db.query(Product).filter(Product.id == product_id).first()
+        if not product or not product.базовое_изделие_id:
+            return set()
+        return {item.компонент_id for item, _src in self._effective_items(db, product.базовое_изделие_id)
+                if item.флаг_базы}
+
+    def get_effective_spec(self, db: Session, изделие_id: int) -> Dict[str, Any]:
+        """Действующий состав изделия (один уровень) с пометкой, откуда каждая строка"""
+        product = db.query(Product).filter(Product.id == изделие_id).first()
+        if not product:
+            return {"success": False, "message": f"Изделие с id {изделие_id} не найдено"}
+
+        names: Dict[int, str] = {}
+        def name_of(pid):
+            if pid not in names:
+                p = db.query(Product).filter(Product.id == pid).first()
+                names[pid] = p.наименование if p else f"#{pid}"
+            return names[pid]
+
+        rows = []
+        for n, (item, src) in enumerate(self._effective_items(db, изделие_id), start=1):
+            comp = item.component
+            rows.append({
+                "номер": n,
+                "строка_id": item.id,
+                "компонент_id": comp.id,
+                "компонент": comp.наименование,
+                "артикул": comp.артикул,
+                "расход": item.расход,
+                "для_количества": item.для_количества,
+                "ед_изм": self._unit_name(db, item.ед_изм_id),
+                "флаг_базы": item.флаг_базы,
+                "источник": "своя" if src == изделие_id else f"из базы: {name_of(src)}",
+                "источник_id": src,
+            })
+
+        excluded = []
+        if product.базовое_изделие_id:
+            for item in db.query(BOMItem).filter(BOMItem.изделие_id == изделие_id, BOMItem.расход == 0).all():
+                excluded.append({"строка_id": item.id, "компонент_id": item.компонент_id,
+                                 "компонент": item.component.наименование})
+
+        return {
+            "success": True,
+            "изделие_id": product.id,
+            "изделие": product.наименование,
+            "базовое_изделие_id": product.базовое_изделие_id,
+            "базовое_изделие": name_of(product.базовое_изделие_id) if product.базовое_изделие_id else None,
+            "строки": rows,
+            "исключено": excluded,
+        }
+
+    def create_modification(self, db: Session, базовое_id: int, наименование: str,
+                            артикул: str = None) -> Dict[str, Any]:
+        """CREATE_MODIFICATION: создать модификацию на основе базового изделия.
+        Строки НЕ копируются — модификация получает их из базы через «действующий состав»."""
+        base = db.query(Product).filter(Product.id == базовое_id).first()
+        if not base:
+            return {"success": False, "message": f"Базовое изделие с id {базовое_id} не найдено"}
+        наименование = (наименование or "").strip()
+        if not наименование:
+            return {"success": False, "message": "Укажите наименование модификации"}
+        артикул = (артикул or "").strip() or None
+        if артикул and db.query(Product).filter(Product.артикул == артикул).first():
+            return {"success": False, "message": f"Изделие с артикулом '{артикул}' уже существует"}
+        try:
+            mod = Product(класс_id=base.класс_id, наименование=наименование, артикул=артикул,
+                          базовое_изделие_id=base.id)
+            db.add(mod)
+            db.flush()
+            self._log_change(db, mod.id, "МОДИФИКАЦИЯ",
+                             f"Создана как модификация изделия '{base.наименование}'")
+            self._log_change(db, base.id, "МОДИФИКАЦИЯ",
+                             f"Создана модификация '{наименование}'")
+            db.commit()
+            return {"success": True, "message": "Модификация создана", "product_id": mod.id}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
+    def get_modifications(self, db: Session, изделие_id: int) -> List[Dict[str, Any]]:
+        """Прямые модификации изделия"""
+        mods = db.query(Product).filter(Product.базовое_изделие_id == изделие_id).order_by(Product.id).all()
+        return [{
+            "id": m.id,
+            "наименование": m.наименование,
+            "артикул": m.артикул,
+            "своих_строк": db.query(BOMItem).filter(BOMItem.изделие_id == m.id).count(),
+            "модификаций": db.query(Product).filter(Product.базовое_изделие_id == m.id).count(),
+        } for m in mods]
