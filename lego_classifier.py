@@ -1565,6 +1565,9 @@ class LegoClassifier:
 
         db.commit()
         print("  Тестовые данные для ХО добавлены")
+
+        # ========== СПЕЦИФИКАЦИИ (ЗАДАНИЕ 1.5) ==========
+        self._load_bom_test_data(db, root_id)
         
         return {"success": True, "message": "Тестовые данные успешно загружены"}
     
@@ -2731,3 +2734,75 @@ class LegoClassifier:
             "своих_строк": db.query(BOMItem).filter(BOMItem.изделие_id == m.id).count(),
             "модификаций": db.query(Product).filter(Product.базовое_изделие_id == m.id).count(),
         } for m in mods]
+
+    # ----- ТЕСТОВЫЕ ДАННЫЕ ДЛЯ СПЕЦИФИКАЦИЙ (шаг 6) -----
+
+    def _load_bom_test_data(self, db: Session, root_id: int) -> None:
+        """Тестовые данные работы 5 (вызывается из load_test_data).
+        Звезда Смерти (изделие)                    ← базовое изделие
+        ├── Башня × 2 шт                [флаг 1]
+        │   ├── Кирпич 2x4 красный × 20 шт
+        │   └── Плита 1x2 белая × 10 шт
+        ├── Кирпич 2x4 красный × 10 шт  [флаг 1]
+        └── Люк Скайуокер × 2 шт        [флаг 0 — только в базовой версии]
+        Кирпичи 2x4 ← ABS 23 г на 10 шт;  Плита 1x2 ← ABS 7 г на 10 шт
+
+        Звезда Смерти — Тёмная сторона (модификация), свои строки:
+            Кирпич 2x4 красный × 0 (исключён), Кирпич 2x4 синий × 10, Дарт Вейдер × 1
+        """
+        print("  Добавляем тестовые данные для спецификаций...")
+
+        # 1. Единицы измерения
+        units = {}
+        for code, sign, name in [("796", "шт", "Штука"), ("163", "г", "Грамм"), ("166", "кг", "Килограмм")]:
+            res = self.add_unit(db, sign, name, code)
+            if res["success"]:
+                units[sign] = res["unit_id"]
+        шт, г = units.get("шт"), units.get("г")
+
+        # 2. Новые ветки классификатора: Материалы и Узлы
+        materials_id = self.add_node(db, "Материалы", "промежуточный", root_id, sort_order=4)["node_id"]
+        assemblies_id = self.add_node(db, "Узлы", "промежуточный", root_id, sort_order=5)["node_id"]
+        sw_node = db.query(Classificator).filter(Classificator.название == "Тематика Star Wars").first()
+        set_class_id = sw_node.id if sw_node else assemblies_id
+
+        # 3. Новые изделия
+        abs_id = self.add_product(db, materials_id, "ABS-пластик", "MAT-ABS")["product_id"]
+        tower_id = self.add_product(db, assemblies_id, "Башня", "ASM-TOWER")["product_id"]
+        star_id = self.add_product(db, set_class_id, "Звезда Смерти (изделие)", "SET-75159")["product_id"]
+
+        def pid(sku):
+            p = db.query(Product).filter(Product.артикул == sku).first()
+            return p.id if p else None
+
+        red, blue, yellow = pid("BR-2X4-RED"), pid("BR-2X4-BLU"), pid("BR-2X4-YEL")
+        plate = pid("PL-1X2-WHT")
+        luke, vader = pid("MF-SW001"), pid("MF-SW002")
+
+        # 4. Нормы расхода материала
+        for brick in (red, blue, yellow):
+            if brick:
+                self.add_bom_item(db, brick, abs_id, 23, для_количества=10, ед_изм_id=г)
+        if plate:
+            self.add_bom_item(db, plate, abs_id, 7, для_количества=10, ед_изм_id=г)
+
+        # 5. Узел «Башня»
+        self.add_bom_item(db, tower_id, red, 20, ед_изм_id=шт)
+        self.add_bom_item(db, tower_id, plate, 10, ед_изм_id=шт)
+
+        # 6. Базовое изделие «Звезда Смерти»
+        self.add_bom_item(db, star_id, tower_id, 2, ед_изм_id=шт)
+        self.add_bom_item(db, star_id, red, 10, ед_изм_id=шт)
+        self.add_bom_item(db, star_id, luke, 2, ед_изм_id=шт, флаг_базы=False)
+
+        # 7. Модификация «Тёмная сторона»
+        mod = self.create_modification(db, star_id, "Звезда Смерти — Тёмная сторона", "SET-75159-DS")
+        if mod["success"]:
+            mod_id = mod["product_id"]
+            self.add_bom_item(db, mod_id, red, 0, ед_изм_id=шт)       # исключить красный кирпич
+            self.add_bom_item(db, mod_id, blue, 10, ед_изм_id=шт)     # синий вместо красного
+            self.add_bom_item(db, mod_id, vader, 1, ед_изм_id=шт)     # Вейдер вместо Люка
+            self.register_change(db, mod_id,
+                                 "Извещение №1: красные кирпичи заменены синими, Люк — Дартом Вейдером")
+
+        print("  Тестовые данные для спецификаций добавлены")
