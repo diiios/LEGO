@@ -2440,6 +2440,27 @@ class LegoClassifier:
             })
         return result
 
+    def register_change(self, db: Session, изделие_id: int, описание: str,
+                        было: str = None, стало: str = None) -> Dict[str, Any]:
+        """REGISTER_CHANGE: вручную зарегистрировать изменение спецификации (извещение).
+        Журнал только пополняется — существующие записи не меняются."""
+        product = db.query(Product).filter(Product.id == изделие_id).first()
+        if not product:
+            return {"success": False, "message": f"Изделие с id {изделие_id} не найдено"}
+        описание = (описание or "").strip()
+        if not описание:
+            return {"success": False, "message": "Опишите изменение"}
+        try:
+            change = SpecChange(изделие_id=изделие_id, действие="ИЗВЕЩЕНИЕ", описание=описание,
+                                было=(было or None), стало=(стало or None))
+            db.add(change)
+            db.commit()
+            db.refresh(change)
+            return {"success": True, "message": "Изменение зарегистрировано", "change_id": change.id}
+        except Exception as e:
+            db.rollback()
+            return {"success": False, "message": str(e)}
+
     def get_spec_changes(self, db: Session, изделие_id: int) -> List[Dict[str, Any]]:
         """Журнал изменений спецификации изделия (новые сверху)"""
         changes = db.query(SpecChange).filter(SpecChange.изделие_id == изделие_id).order_by(

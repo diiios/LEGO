@@ -412,3 +412,8 @@ class BOMItemUpdate(BaseModel):
 class ModificationCreate(BaseModel):
     наименование: str                 # "Звезда Смерти — Тёмная сторона"
     артикул: Optional[str] = None     # "SET-75159-DS"
+
+class ChangeCreate(BaseModel):
+    описание: str                     # "Извещение №12: замена красных кирпичей синими"
+    было: Optional[str] = None
+    стало: Optional[str] = None

@@ -1258,6 +1258,11 @@ def delete_bom_item(item_id: int, db: Session = Depends(get_db)):
 
 
 # --- Журнал изменений ---
+@app.post("/products/{product_id}/changes", tags=[TAG_BOM])
+def register_product_change(product_id: int, data: ChangeCreate, db: Session = Depends(get_db)):
+    """REGISTER_CHANGE: вручную записать изменение (извещение) в журнал изделия"""
+    return _raise_if_failed(classifier.register_change(db, product_id, data.описание, data.было, data.стало))
+
 @app.get("/products/{product_id}/changes", tags=[TAG_BOM])
 def get_product_changes(product_id: int, db: Session = Depends(get_db)):
     """Журнал изменений спецификации изделия (новые сверху)"""
