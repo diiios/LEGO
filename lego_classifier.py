@@ -2327,7 +2327,14 @@ class LegoClassifier:
 
         exists = db.query(BOMItem).filter(BOMItem.изделие_id == изделие_id,
                                           BOMItem.компонент_id == компонент_id).first()
+        
         if exists:
+              # Строка уже есть. Если это исключение (расход 0) — объясняем, как вернуть компонент
+            if exists.расход == 0:
+                return {"success": False,
+                        "message": f"'{component.наименование}' исключён из базы в этой модификации. "
+                                   f"Чтобы вернуть его, нажмите «Вернуть» в блоке «Исключено из базы»"}
+            
             return {"success": False,
                     "message": f"'{component.наименование}' уже есть в составе '{product.наименование}'. "
                                f"Измените существующую строку (id {exists.id})"}

@@ -777,3 +777,6 @@ body {
     padding: 0.25rem;
     cursor: pointer;
 }
+
+/* Работа 5: в режиме пользователя спецификации только для просмотра */
+body[data-role="user"] .bom-edit { display: none !important; }
