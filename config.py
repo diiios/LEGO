@@ -10,6 +10,15 @@ class Config:
     DB_NAME = os.getenv("DB_NAME", "lego_classifier")
     DB_USER = os.getenv("DB_USER", "postgres")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+
+    # development — локальная разработка; production — сервер (служебные эндпоинты очистки БД отключены)
+    ENV = os.getenv("ENV", "development")
+    # Вывод SQL-запросов в консоль (1 — включён, 0 — выключен)
+    SQL_ECHO = os.getenv("SQL_ECHO", "1") == "1"
+
+    @property
+    def is_production(self):
+        return self.ENV == "production"
     
     DATABASE_URL = f"postgresql+pg8000://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
     
