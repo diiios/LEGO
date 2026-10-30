@@ -1,0 +1,14 @@
+.git
+.github
+venv/
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.env
+*.log
+*.docx
+*.pdf
+*.pptx
+.DS_Store
+Claude outputs/

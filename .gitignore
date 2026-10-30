@@ -24,3 +24,6 @@ desktop.ini
 backup_*.sql
 *.tgz
 *.zip
+
+# Личные файлы (отчёты, выгрузки)
+Claude outputs/

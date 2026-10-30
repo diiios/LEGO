@@ -25,7 +25,7 @@ from fastapi.templating import Jinja2Templates
 # Create engine
 # pool_pre_ping: перед выдачей соединения из пула проверяем, что оно живо (иначе — переподключение);
 # pool_recycle: соединения старше 5 минут пересоздаются (БД/Docker/Windows закрывают простаивающие соединения)
-engine = create_engine(config.DATABASE_URL, echo=True, pool_pre_ping=True, pool_recycle=300)
+engine = create_engine(config.DATABASE_URL, echo=config.SQL_ECHO, pool_pre_ping=True, pool_recycle=300)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # FastAPI app
@@ -444,19 +444,25 @@ def create_part_type(data: PartTypeCreate, db: Session = Depends(get_db)):
 
 # ==================== UTILITIES ====================
 
-@app.post("/test-data", tags=["Сервисные"])
+def development_only():
+    """Служебные операции, стирающие данные, недоступны на сервере (ENV=production)"""
+    if config.is_production:
+        raise HTTPException(status_code=403, detail="Операция отключена на сервере: она стирает данные базы")
+
+
+@app.post("/test-data", tags=["Сервисные"], dependencies=[Depends(development_only)])
 def load_test_data(db: Session = Depends(get_db)):
     """Загрузить тестовые данные"""
     result = classifier.load_test_data(db)
     return result
 
-@app.delete("/clear", tags=["Сервисные"])
+@app.delete("/clear", tags=["Сервисные"], dependencies=[Depends(development_only)])
 def clear_database(db: Session = Depends(get_db)):
     """Очистить базу данных"""
     classifier.clear_database(db)
     return {"success": True, "message": "База данных очищена"}
 
-@app.post("/reset-database", tags=["Сервисные"])
+@app.post("/reset-database", tags=["Сервисные"], dependencies=[Depends(development_only)])
 def reset_database():
     """Полностью пересоздаёт базу данных (только для разработки!)"""
     import psycopg2

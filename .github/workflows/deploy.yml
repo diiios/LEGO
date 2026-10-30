@@ -1,0 +1,94 @@
+# CI/CD: проверка каждого Pull Request в master и автоматическая выкладка на VPS после слияния.
+name: CI/CD
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:        # ручной запуск: вкладка Actions → CI/CD → Run workflow
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    name: Проверка (запуск приложения на чистой базе)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: lego_classifier
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      DB_HOST: localhost
+      DB_PORT: "5432"
+      DB_NAME: lego_classifier
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      SQL_ECHO: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Установка зависимостей
+        run: pip install -r requirements.txt
+
+      - name: Проверка синтаксиса
+        run: python -m compileall -q -x "venv|\.venv" .
+
+      - name: Запуск приложения и проверка ответов
+        run: |
+          uvicorn main:app --port 8000 > server.log 2>&1 &
+          # при первом запуске на пустой базе загружаются тестовые данные заданий 1–6
+          for i in $(seq 1 90); do curl -sf http://localhost:8000/api > /dev/null && break; sleep 2; done
+          curl -sf http://localhost:8000/api
+          curl -sf http://localhost:8000/ > /dev/null
+          curl -sf http://localhost:8000/bom/products | python -c "import json,sys; d=json.load(sys.stdin); assert d, 'нет изделий'; print('BOM: изделий', len(d))"
+          curl -sf http://localhost:8000/tm/products | python -c "import json,sys; d=json.load(sys.stdin); assert any(p['операций'] for p in d), 'нет маршрутов'; print('ТМ: изделий', len(d))"
+
+      - name: Лог сервера при ошибке
+        if: failure()
+        run: cat server.log
+
+  deploy:
+    name: Выкладка на сервер
+    needs: check
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Обновление по SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          command_timeout: 20m
+          script: |
+            set -e
+            cd ~/LEGO
+            git fetch --prune origin
+            git reset --hard origin/master
+            docker compose -f docker-compose.prod.yml up -d --build --remove-orphans
+            docker image prune -f
+            # ждём, пока приложение ответит
+            for i in $(seq 1 40); do
+              if docker compose -f docker-compose.prod.yml exec -T app python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/api')"; then
+                echo "Выкладка завершена: $(git log -1 --format='%h %s')"; exit 0
+              fi
+              sleep 3
+            done
+            docker compose -f docker-compose.prod.yml logs --tail=100 app
+            exit 1

@@ -1,0 +1,13 @@
+# Обратный прокси перед приложением.
+# SITE_ADDRESS из .env: доменное имя (lego.example.ru) — Caddy сам получит HTTPS-сертификат;
+# не задан — сайт работает по http://IP-сервера (порт 80).
+{$SITE_ADDRESS::80} {
+	encode gzip
+
+	# Пароль на весь сайт: в проекте нет собственной авторизации
+	basic_auth {
+		{$AUTH_USER} {$AUTH_HASH}
+	}
+
+	reverse_proxy app:8000
+}
