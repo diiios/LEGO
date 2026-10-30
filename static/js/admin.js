@@ -517,6 +517,14 @@ document.addEventListener("DOMContentLoaded", () => {
         'loadSubjects': loadSubjects,
         'loadHOOps': loadHOOps,
         'loadClassifierTools': loadClassifierTools,
+        'loadBomSpecs': loadBomSpecs,
+        'loadBomModifications': loadBomModifications,
+        'loadBomChanges': loadBomChanges,
+        'loadBomUnits': loadBomUnits,
+        'loadTmRoutes': loadTmRoutes,
+        'loadTmTypical': loadTmTypical,
+        'loadTmWorkCenters': loadTmWorkCenters,
+        'loadTmTools': loadTmTools,
     };
 
     // Восстанавливаем активный пункт меню по сохранённому имени функции

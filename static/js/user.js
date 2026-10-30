@@ -22,6 +22,12 @@ document.addEventListener('DOMContentLoaded', () => {
         'loadParts': loadParts,
         'loadMinifigures': loadMinifigures,
         'loadProductsFilter': loadProductsFilter,
+        'loadBomSpecs': loadBomSpecs,
+        'loadBomModifications': loadBomModifications,
+        'loadBomChanges': loadBomChanges,
+        'loadTmRoutes': loadTmRoutes,
+        'loadTmTypical': loadTmTypical,
+        'loadTmWorkCenters': loadTmWorkCenters,
     };
     // Восстанавливаем активный пункт меню по сохранённому имени функции
 if (savedPage) {

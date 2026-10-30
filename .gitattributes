@@ -1,0 +1,13 @@
+# Единые окончания строк для всех (Windows / macOS): в репозитории всегда LF.
+# Без этого файла Windows-редакторы пишут CRLF, и git показывает изменёнными
+# все строки файла (так было с main.py, models.py, app.css).
+* text=auto eol=lf
+
+# Двоичные файлы — без преобразований
+*.docx binary
+*.doc  binary
+*.pdf  binary
+*.pptx binary
+*.png  binary
+*.jpg  binary
+*.ico  binary

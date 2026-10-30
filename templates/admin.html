@@ -38,6 +38,16 @@
         <a class="nav-link" href="#" onclick="navigateAdmin(event, loadProducts)"><i class="fas fa-box"></i> Изделия</a>
         <a class="nav-link" href="#" onclick="navigateAdmin(event, loadEnumerations)"><i class="fas fa-list"></i> Перечисления</a>
         <a class="nav-link" href="#" onclick="navigateAdmin(event, loadEnumValuesAll)"><i class="fas fa-tasks"></i> Значения</a>
+        <div class="nav-section-title">Спецификации (BOM)</div>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadBomSpecs)"><i class="fas fa-sitemap"></i> Спецификации изделий</a>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadBomModifications)"><i class="fas fa-code-branch"></i> Модификации</a>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadBomChanges)"><i class="fas fa-history"></i> Журнал изменений</a>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadBomUnits)"><i class="fas fa-ruler-combined"></i> Единицы измерения</a>
+        <div class="nav-section-title">Маршрутная технология</div>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadTmRoutes)"><i class="fas fa-route"></i> Технологические маршруты</a>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadTmTypical)"><i class="fas fa-feather"></i> Типовые ТП</a>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadTmWorkCenters)"><i class="fas fa-industry"></i> ГРЦ</a>
+        <a class="nav-link" href="#" onclick="navigateAdmin(event, loadTmTools)"><i class="fas fa-screwdriver-wrench"></i> Инструмент и оснастка</a>
         <div class="nav-section-title">Система</div>
         <a class="nav-link" href="#" onclick="navigateAdmin(event, loadClassifierTools)"><i class="fas fa-screwdriver-wrench"></i> Сервис классификатора</a>
         <a class="nav-link" href="#" onclick="loadTestData()"><i class="fas fa-database text-warning"></i> Тестовые данные</a>
@@ -53,5 +63,7 @@
 <script src="/static/js/common.js"></script>
 <script src="/static/js/product-params.js"></script>
 <script src="/static/js/admin.js"></script>
+<script src="/static/js/bom.js"></script>
+<script src="/static/js/routing.js"></script>
 <script src="/static/js/admin-enhance.js"></script>
 </body></html>

@@ -1,5 +1,26 @@
+# Виртуальное окружение — у каждого своё, создаётся из requirements.txt
 venv/
 .venv/
+
+# Кэш Python и инструментов
 __pycache__/
 *.pyc
 .pycache/
+.mypy_cache/
+.pytest_cache/
+
+# Локальные настройки (у каждого свой порт БД и т.п.) — шаблон лежит в .env.example
+.env
+
+# Мусор ОС и редакторов
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+~$*
+
+# Логи, дампы, архивы
+*.log
+backup_*.sql
+*.tgz
+*.zip
