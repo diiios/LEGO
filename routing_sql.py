@@ -12,6 +12,7 @@
   SUM_MR(pIdEl, pQ)             — сводные нормы материальных ресурсов на всё изделие (с ценой и стоимостью)
   TR_TO(pIdEl, pQ)              — сводные нормы трудовых ресурсов (по профессиям и квалификации)
   GRC_LOAD(pIdEl, pQ)           — загрузка оборудования (машино-часы по ГРЦ)
+  TO_LABOR_Q(pIdEl, pQ, pOwn)   — трудоёмкость и машино-часы по каждому этапу маршрута
   CALC_COST(pIdEl, pQ)          — калькуляция себестоимости: материалы + труд + оборудование
 """
 
@@ -167,6 +168,34 @@ LANGUAGE sql STABLE AS $$
     LEFT JOIN "грц" g ON g.id = l.грц_id
     WHERE l.грц_id IS NOT NULL
     GROUP BY l.грц_id;
+$$;
+
+-- TO_LABOR_Q: трудоёмкость каждого этапа маршрута на pQ изделий.
+-- Этап = операция тех-маршрута (для операции с типовым ТП — каждая типовая операция).
+-- pOwn = true — только операции самого изделия, false — со всеми компонентами (по FIND_TM).
+-- Трудоёмкость, нормо-ч = машинное время на ГРЦ, маш-ч = (Тпз + Тшт × количество × pQ) / 60.
+CREATE OR REPLACE FUNCTION to_labor_q(pIdEl integer, pQ double precision, pOwn boolean)
+RETURNS TABLE(операция_id integer, изделие_id integer, номер integer, операция varchar,
+              типовая_операция varchar, грц_id integer, профессия_id integer, квалификация_id integer,
+              тпз double precision, тшт double precision, количество double precision,
+              часы double precision, ставка_разряда double precision, оплата double precision,
+              ставка_грц double precision, затраты_оборудования double precision)
+LANGUAGE sql STABLE AS $$
+    SELECT o.id, o."изделие_id", o."номер", o."наименование",
+           CASE WHEN l.типовая_операция_id IS NULL THEN NULL ELSE l.наименование END,
+           l.грц_id, l.профессия_id, l.квалификация_id, l.тпз, l.тшт, q.количество,
+           (l.тпз + l.тшт * q.количество * pQ) / 60.0,
+           COALESCE((ev.extra_data ->> 'ставка')::double precision, 0),
+           (l.тпз + l.тшт * q.количество * pQ) / 60.0 * COALESCE((ev.extra_data ->> 'ставка')::double precision, 0),
+           COALESCE(g."ставка_часа", 0),
+           CASE WHEN l.грц_id IS NULL THEN 0
+                ELSE (l.тпз + l.тшт * q.количество * pQ) / 60.0 * COALESCE(g."ставка_часа", 0) END
+    FROM tm_ops_q(pIdEl) q
+    JOIN "изделие_операция" o ON o.id = q.операция_id
+    CROSS JOIN LATERAL tm_labor(q.операция_id) l
+    LEFT JOIN "значение_перечисления" ev ON ev.id = l.квалификация_id
+    LEFT JOIN "грц" g ON g.id = l.грц_id
+    WHERE NOT pOwn OR o."изделие_id" = pIdEl;
 $$;
 
 -- CALC_COST: калькуляция себестоимости pQ изделий по статьям затрат

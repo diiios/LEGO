@@ -524,6 +524,10 @@ document.addEventListener("DOMContentLoaded", () => {
         'loadTmRoutes': loadTmRoutes,
         'loadTmTypical': loadTmTypical,
         'loadTmWorkCenters': loadTmWorkCenters,
+        'loadTmWorkforce': loadTmWorkforce,
+        'loadCfgOrders': loadCfgOrders,
+        'loadCfgTemplates': loadCfgTemplates,
+        'loadCfgFunctions': loadCfgFunctions,
         'loadTmTools': loadTmTools,
     };
 

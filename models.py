@@ -188,6 +188,7 @@ class ParameterClass(Base):
     макс_значение = Column(Float, nullable=True)
     значение_по_умолчанию = Column(Text, nullable=True)
     обязательный = Column(Integer, default=0)  # 0 = нет, 1 = да
+    флаг_конфигурации = Column(Boolean, nullable=False, default=False, server_default="false")  # FLAG_CONF (задание 7)
     
     # Relationships
     parameter = relationship("Parameter", back_populates="class_links")
@@ -212,10 +213,18 @@ class Product(Base):
     базовое_изделие_id = Column(Integer, ForeignKey("изделие.id", ondelete="SET NULL"), nullable=True)
     # Основная единица измерения изделия (для материалов — кг, г, м и т.п.)
     ед_изм_id = Column(Integer, ForeignKey("единица_измерения.id", ondelete="SET NULL"), nullable=True)
+    # ---- Задание 7 (варианты исполнения) ----
+    # ПРОСТОЕ — изделие без конфигурации, ТИПОВОЕ — типовое изделие с конфигуратором (шаблон),
+    # ВАРИАНТ — вариант исполнения, созданный из шаблона (шаблон_id)
+    вид_конфигурации = Column(String(10), nullable=False, default="ПРОСТОЕ", server_default="ПРОСТОЕ")
+    шаблон_id = Column(Integer, ForeignKey("изделие.id", ondelete="RESTRICT"), nullable=True)
+    цена = Column(Float, nullable=True)
+    формула_цены_id = Column(Integer, ForeignKey("вызов_функции.id", ondelete="SET NULL"), nullable=True)
     
     # Relationships
     class_node = relationship("Classificator", foreign_keys=[класс_id])
     base_product = relationship("Product", remote_side=[id], foreign_keys=[базовое_изделие_id])
+    template = relationship("Product", remote_side=[id], foreign_keys=[шаблон_id])
     unit = relationship("UnitOfMeasure", foreign_keys=[ед_изм_id])
     parameter_values = relationship("ParameterValue", back_populates="product", cascade="all, delete-orphan")
 
