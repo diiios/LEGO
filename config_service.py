@@ -1267,8 +1267,12 @@ def load_config_test_data(db: Session, classifier) -> None:
             pc.флаг_конфигурации = True
         db.commit()
 
-    class_params(K_PLATE, [("W", 1, 16), ("L", 1, 32), ("цвет", None, None)])
-    class_params(K_BRICK, [("W", 1, 4), ("L", 1, 16), ("H", 1, 12), ("цвет", None, None)])
+    # общий параметр «цвет» описан один раз у надкласса и наследуется пластинами и кирпичами (GET_CONFIG_PARAMS)
+    class_params(root_cfg, [("цвет", None, None)])
+    db.query(ParameterClass).filter(ParameterClass.класс_id == root_cfg).update({"порядковый_номер": 100})
+    db.commit()
+    class_params(K_PLATE, [("W", 1, 16), ("L", 1, 32)])
+    class_params(K_BRICK, [("W", 1, 4), ("L", 1, 16), ("H", 1, 12)])
     class_params(K_MF, [("серия", None, None), ("аксессуар", None, None), ("цвет", None, None)])
 
     sht = db.query(UnitOfMeasure).filter(UnitOfMeasure.обозначение == "шт").first()
