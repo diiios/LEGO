@@ -16,6 +16,11 @@ from bom_sql import MIGRATION_SQL, FUNCTIONS_SQL
 import routing_models  # noqa: F401
 import routing_api
 import routing_sql
+# Задание 7: заказы на изделия с вариантами исполнения (модели — до create_all)
+import config_models  # noqa: F401
+import config_api
+import config_sql
+import openapi_docs
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -30,8 +35,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # FastAPI app
 app = FastAPI(
-    title="Lego Classifier API",
-    description="API для управления классификатором Lego на PostgreSQL",
+    title="API информационной системы LEGO",
+    description="Классификатор, справочник, спецификации и маршрутная технология изделий LEGO",
     version="2.0.0"
 )
 
@@ -89,6 +94,13 @@ app.include_router(bom_api.router)
 routing_api._get_db = get_db
 app.include_router(routing_api.router)
 
+# Задание 7: подключение API заказов и конфигуратора вариантов исполнения
+config_api._get_db = get_db
+app.include_router(config_api.router)
+
+# Документация Swagger: русский язык, разделы по заданиям, порядок GET → POST → PUT → DELETE
+openapi_docs.setup_openapi(app)
+
 
 def install_bom_schema():
     """Миграция БД и установка хранимых функций для задания 5"""
@@ -96,6 +108,16 @@ def install_bom_schema():
         for stmt in [x.strip() for x in MIGRATION_SQL.split(";") if x.strip()]:
             conn.execute(text(stmt))
         for fn in [x.strip() for x in re.split(r"(?=CREATE OR REPLACE FUNCTION)", FUNCTIONS_SQL) if x.strip().startswith("CREATE")]:
+            conn.execute(text(fn))
+
+
+def install_config_schema():
+    """Задание 7: миграция изделия и параметра класса, хранимые функции конфигуратора"""
+    with engine.begin() as conn:
+        for stmt in [x.strip() for x in config_sql.MIGRATION_SQL.split(";") if x.strip()]:
+            conn.execute(text(stmt))
+        for fn in [x.strip() for x in re.split(r"(?=CREATE OR REPLACE FUNCTION)", config_sql.FUNCTIONS_SQL)
+                   if x.strip().startswith("CREATE")]:
             conn.execute(text(fn))
 
 
@@ -143,6 +165,7 @@ async def startup_event():
         """))
     install_bom_schema()
     install_routing_schema()
+    install_config_schema()
     """Инициализация при запуске"""
     print("Запуск Lego Classifier API на PostgreSQL...")
     # Загружаем тестовые данные если база пуста

@@ -276,6 +276,13 @@ def find_tm(product_id: int, db: Session = Depends(get_db)):
     return svc.find_tm(db, product_id)
 
 
+@router.get("/operations/{op_id}/calc",
+            summary="Расчёт строки маршрута на q: Требуемые ресурсы(q), Трудоёмкость(q), Стоимость(q)")
+@handle
+def operation_calc(op_id: int, quantity: float = Query(1.0, gt=0), db: Session = Depends(get_db)):
+    return svc.operation_calc(db, op_id, quantity)
+
+
 @router.get("/operations/{op_id}/mr", summary="MR_Q — нормы расхода ресурсов для операции")
 @handle
 def mr_q(op_id: int, quantity: float = Query(1.0, gt=0), db: Session = Depends(get_db)):
@@ -294,6 +301,26 @@ def tr_to(product_id: int, quantity: float = Query(1.0, gt=0), db: Session = Dep
     return svc.tr_to(db, product_id, quantity)
 
 
+@router.get("/products/{product_id}/labor-stages", summary="Трудоёмкость(q) и машино-часы по этапам маршрута")
+@handle
+def labor_stages(product_id: int, quantity: float = Query(1.0, gt=0), own: bool = Query(False),
+                 db: Session = Depends(get_db)):
+    return svc.labor_by_stage(db, product_id, quantity, own)
+
+
+@router.get("/work-centers/{wc_id}/load", summary="Загрузка(q) ГРЦ: машино-часы для изготовления q изделий")
+@handle
+def work_center_load(wc_id: int, product_id: int = Query(...), quantity: float = Query(1.0, gt=0),
+                     db: Session = Depends(get_db)):
+    return svc.work_center_load(db, wc_id, product_id, quantity)
+
+
+@router.get("/workforce", summary="Профессии и квалификации (разряды) с тарифными ставками")
+@handle
+def workforce(db: Session = Depends(get_db)):
+    return svc.workforce(db)
+
+
 @router.get("/products/{product_id}/cost", summary="Калькуляция себестоимости (материалы + труд + оборудование)")
 @handle
 def calc_cost(product_id: int, quantity: float = Query(1.0, gt=0), db: Session = Depends(get_db)):
@@ -307,7 +334,7 @@ def typicals(db: Session = Depends(get_db)):
     return svc.get_typicals(db)
 
 
-@router.get("/typical/stats", summary="Статистика пула приспособленцев")
+@router.get("/typical/stats", summary="Служебная статистика типовых ТП")
 @handle
 def typical_stats(db: Session = Depends(get_db)):
     return svc.flyweight_stats(db)

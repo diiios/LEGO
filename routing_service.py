@@ -770,6 +770,34 @@ class RoutingService:
                            "норма": r["норма"], "для_количества": r["для_количества"], "количество": r["количество"],
                            "ед_изм": n["unit"].get(r["ед_изм_id"]), "источник": r["источник"]} for r in rows]}
 
+    def operation_calc(self, db: Session, op_id: int, qty: float) -> Dict[str, Any]:
+        """Методы строки маршрута на q единиц результата: Требуемые ресурсы(q) = MR_Q,
+        Трудоёмкость(q) — для позиции тех-маршрута, Стоимость(q) — для позиции закупки"""
+        mr = self.mr_q(db, op_id, qty)
+        op = db.get(ProductOperation, op_id)
+        n = self._names(db)
+        res: Dict[str, Any] = {"success": True, "операция": mr["операция"], "вид": op.вид, "количество": qty,
+                               "ресурсы": mr["items"], "этапы": [], "часы": 0.0, "оплата": 0.0,
+                               "затраты_оборудования": 0.0, "стоимость": None}
+        if op.вид == "ЗАКУПКА":
+            res["цена"] = op.цена or 0
+            res["стоимость"] = (op.цена or 0) * qty
+            return res
+        rates = {q["id"]: q["ставка"] for q in self._qualifications(db)}
+        wc = {g.id: g.ставка_часа or 0 for g in db.query(WorkCenter).all()}
+        rows = db.execute(text("SELECT * FROM tm_labor(:o)"), {"o": op_id}).mappings().all()
+        for r in rows:
+            h = (r["тпз"] + r["тшт"] * qty) / 60.0
+            res["этапы"].append({"этап": r["наименование"] if r["типовая_операция_id"] else None,
+                                 "грц": n["grc"].get(r["грц_id"]), "профессия": n["cls"].get(r["профессия_id"]) or "—",
+                                 "квалификация": n["qual"].get(r["квалификация_id"]) or "—",
+                                 "тпз": r["тпз"], "тшт": r["тшт"], "часы": h,
+                                 "оплата": h * rates.get(r["квалификация_id"], 0),
+                                 "затраты_оборудования": h * wc.get(r["грц_id"], 0) if r["грц_id"] else 0.0})
+        for k in ("часы", "оплата", "затраты_оборудования"):
+            res[k] = sum(e[k] for e in res["этапы"])
+        return res
+
     def _check_qty(self, db: Session, product_id: int, qty: float) -> None:
         if not db.get(Product, product_id):
             raise RoutingError("Изделие не найдено")
@@ -805,6 +833,59 @@ class RoutingService:
         grc.sort(key=lambda x: -x["машино_часы"])
         return {"success": True, "количество": qty, "items": items, "грц": grc,
                 "итого_ч": sum(i["трудоемкость_ч"] for i in items), "итого_руб": sum(i["стоимость"] for i in items)}
+
+    def labor_by_stage(self, db: Session, product_id: int, qty: float, own: bool = False) -> Dict[str, Any]:
+        """Трудоёмкость(q) каждой позиции тех-маршрута: нормо-часы, машино-часы на ГРЦ, оплата и затраты оборудования"""
+        self._check_qty(db, product_id, qty)
+        n = self._names(db)
+        rows = db.execute(text("SELECT * FROM to_labor_q(:p, :q, :own)"),
+                          {"p": product_id, "q": qty, "own": own}).mappings().all()
+        items = []
+        for r in rows:
+            prod = n["prod"].get(r["изделие_id"])
+            items.append({"операция_id": r["операция_id"], "изделие_id": r["изделие_id"],
+                          "изделие": prod.наименование if prod else "—", "артикул": prod.артикул if prod else "",
+                          "номер": r["номер"], "операция": r["операция"], "типовая_операция": r["типовая_операция"],
+                          "грц_id": r["грц_id"], "грц": n["grc"].get(r["грц_id"]),
+                          "профессия": n["cls"].get(r["профессия_id"]) or "—",
+                          "квалификация": n["qual"].get(r["квалификация_id"]) or "—",
+                          "тпз": r["тпз"], "тшт": r["тшт"], "количество": r["количество"], "часы": r["часы"],
+                          "машино_часы": r["часы"] if r["грц_id"] else 0.0,
+                          "оплата": r["оплата"], "затраты_оборудования": r["затраты_оборудования"]})
+        items.sort(key=lambda x: (x["изделие_id"] != product_id, x["изделие"], x["номер"]))
+        return {"success": True, "количество": qty, "только_изделие": own, "items": items,
+                "итого_ч": sum(i["часы"] for i in items), "итого_маш_ч": sum(i["машино_часы"] for i in items),
+                "итого_оплата": sum(i["оплата"] for i in items),
+                "итого_оборудование": sum(i["затраты_оборудования"] for i in items)}
+
+    def work_center_load(self, db: Session, wc_id: int, product_id: int, qty: float) -> Dict[str, Any]:
+        """Загрузка(q) ГРЦ: машино-часы, которые требуются на этом ГРЦ для изготовления q изделий"""
+        wc = db.get(WorkCenter, wc_id)
+        if not wc:
+            raise RoutingError("ГРЦ не найден")
+        st = self.labor_by_stage(db, product_id, qty, own=False)
+        items = [i for i in st["items"] if i["грц_id"] == wc_id]
+        hours = sum(i["машино_часы"] for i in items)
+        fund = wc.количество_ед * 8
+        return {"success": True, "грц": f"{wc.код} {wc.наименование}", "количество_ед": wc.количество_ед,
+                "ставка": wc.ставка_часа, "изделие": db.get(Product, product_id).наименование, "количество": qty,
+                "items": items, "машино_часы": hours, "смен": hours / fund if fund else None,
+                "затраты": hours * (wc.ставка_часа or 0)}
+
+    def workforce(self, db: Session) -> Dict[str, Any]:
+        """Профессии и квалификации (разряды) с тарифными ставками и числом операций, где они требуются"""
+        def usage(col: str) -> Dict[int, int]:
+            rows = db.execute(text(f"""
+                SELECT x, count(*) FROM (
+                    SELECT "{col}" AS x FROM "изделие_операция" WHERE "{col}" IS NOT NULL AND "вид" = 'ТЕХ'
+                    UNION ALL
+                    SELECT "{col}" FROM "типовая_операция" WHERE "{col}" IS NOT NULL) u GROUP BY x""")).all()
+            return {r[0]: r[1] for r in rows}
+        uq, up = usage("квалификация_id"), usage("профессия_id")
+        quals = [dict(q, операций=uq.get(q["id"], 0)) for q in self._qualifications(db)]
+        profs = [{"id": p["id"], "name": p["name"], "операций": up.get(p["id"], 0)}
+                 for p in self._subtree(db, ROOT_PROFESSIONS)]
+        return {"qualifications": quals, "professions": profs}
 
     def calc_cost(self, db: Session, product_id: int, qty: float) -> Dict[str, Any]:
         self._check_qty(db, product_id, qty)

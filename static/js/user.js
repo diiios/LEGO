@@ -28,6 +28,10 @@ document.addEventListener('DOMContentLoaded', () => {
         'loadTmRoutes': loadTmRoutes,
         'loadTmTypical': loadTmTypical,
         'loadTmWorkCenters': loadTmWorkCenters,
+        'loadTmWorkforce': loadTmWorkforce,
+        'loadCfgOrders': loadCfgOrders,
+        'loadCfgTemplates': loadCfgTemplates,
+        'loadCfgFunctions': loadCfgFunctions,
     };
     // Восстанавливаем активный пункт меню по сохранённому имени функции
 if (savedPage) {

@@ -9,7 +9,7 @@ const TM_READONLY = document.body.dataset.role !== 'admin';
 
 let tmState = {
     refs: null, products: [], selectedId: null, tab: 'route', search: '', kind: '', qty: 1000,
-    typicalId: null, pendingId: null,
+    typicalId: null, pendingId: null, ownOnly: false,
 };
 
 const TM_TABS = [
@@ -193,9 +193,10 @@ function tmRouteHtml(r) {
                     <span class="tm-op-no"><i class="fas fa-cart-shopping"></i></span>
                     <div class="tm-op-title"><b>Позиция закупки</b> — изделие поступает от поставщика готовым
                         <div class="tm-op-meta"><span>Цена: <b>${tmMoney(o.цена)}</b> руб. за ${escapeHtml(o.ед_изм || 'ЕИ')}</span>${o.примечание ? `<span>${escapeHtml(o.примечание)}</span>` : ''}</div></div>
-                    ${TM_READONLY ? '' : `<div class="tm-op-actions">
+                    <div class="tm-op-actions"><button class="btn btn-sm btn-outline-dark" title="Расчёт на q: ресурсы, трудоёмкость, стоимость" onclick="tmShowOpCalc(${o.id})"><i class="fas fa-calculator"></i></button>
+                    ${TM_READONLY ? '' : `
                         <button class="btn btn-sm btn-outline-primary" title="Изменить цену" onclick='tmShowOperationModal(${p.id}, "ЗАКУПКА", ${JSON.stringify(o).replace(/'/g, "&#39;")})'><i class="fas fa-edit"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" title="Удалить" onclick="tmDeleteOperation(${o.id})"><i class="fas fa-trash"></i></button></div>`}
+                        <button class="btn btn-sm btn-outline-danger" title="Удалить" onclick="tmDeleteOperation(${o.id})"><i class="fas fa-trash"></i></button>`}</div>
                 </div></div>`;
             continue;
         }
@@ -213,15 +214,16 @@ function tmRouteHtml(r) {
                                  <span>Тпз = <b>${bomNum(o.тпз, 3)}</b> мин</span><span>Тшт = <b>${bomNum(o.тшт, 4)}</b> мин</span>`}
                     </div>
                 </div>
-                ${TM_READONLY ? '' : `<div class="tm-op-actions">
+                <div class="tm-op-actions"><button class="btn btn-sm btn-outline-dark" title="Расчёт на q: ресурсы, трудоёмкость, стоимость" onclick="tmShowOpCalc(${o.id})"><i class="fas fa-calculator"></i></button>
+                ${TM_READONLY ? '' : `
                     <button class="btn btn-sm btn-outline-success" title="Добавить входной ресурс" onclick="tmShowInputModal(${o.id}, ${p.id})"><i class="fas fa-right-to-bracket"></i></button>
                     <button class="btn btn-sm btn-outline-secondary" title="Назначить инструмент / оснастку" onclick="tmShowToolLinkModal(${o.id})"><i class="fas fa-screwdriver-wrench"></i></button>
                     <button class="btn btn-sm btn-outline-info" title="${typ ? 'Изменить параметры типового ТП' : 'Применить типовой ТП'}" onclick="tmShowApplyTypicalModal(${o.id}, ${o.типовой_тп_id || 'null'})"><i class="fas fa-feather"></i></button>
                     <button class="btn btn-sm btn-outline-primary" title="Изменить операцию" onclick='tmShowOperationModal(${p.id}, "ТЕХ", ${JSON.stringify({ ...o, inputs: [], типовые_операции: [], типовые_ресурсы: [], tools: [], параметры: [] }).replace(/'/g, "&#39;")})'><i class="fas fa-edit"></i></button>
-                    <button class="btn btn-sm btn-outline-danger" title="Удалить операцию" onclick="tmDeleteOperation(${o.id})"><i class="fas fa-trash"></i></button></div>`}
+                    <button class="btn btn-sm btn-outline-danger" title="Удалить операцию" onclick="tmDeleteOperation(${o.id})"><i class="fas fa-trash"></i></button>`}</div>
             </div>`;
         if (typ) {
-            html += `<div class="tm-sub"><div class="tm-sub-title"><i class="fas fa-feather"></i> Типовой ТП: значения параметров (внешнее состояние)
+            html += `<div class="tm-sub"><div class="tm-sub-title"><i class="fas fa-feather"></i> Типовой ТП: значения параметров
                     ${o.параметры.map(x => `<span class="tm-param">${escapeHtml(x.обозначение)} = <b>${bomNum(x.значение)}</b> ${escapeHtml(x.ед_изм || '')}</span>`).join('')}
                     ${TM_READONLY ? '' : `<button class="btn btn-link btn-sm p-0 ms-2" onclick="tmRemoveTypical(${o.id})">отвязать</button>`}</div>
                 <table class="data-table tm-mini"><thead><tr><th>№</th><th>Типовая операция</th><th>ГРЦ</th><th>Профессия, разряд</th><th class="text-end">Тпз, мин</th><th class="text-end">Тшт, мин</th></tr></thead><tbody>
@@ -350,7 +352,8 @@ async function tmRunCalc() {
                     <td>${escapeHtml(i.ед_изм || '—')}</td><td class="text-end">${tmMoney(i.цена)}</td><td class="text-end">${tmMoney(i.стоимость)}</td><td class="text-end">${i.вхождений}</td></tr>`).join('')}
                 </tbody><tfoot><tr><td colspan="6" class="text-end fw-bold">Итого материальные затраты:</td><td class="text-end fw-bold">${tmMoney(r.итого)}</td><td></td></tr></tfoot></table></div>`;
         } else if (tmState.tab === 'labor') {
-            const r = await apiRequest(`/tm/products/${id}/labor?quantity=${q}`);
+            const [r, st] = await Promise.all([apiRequest(`/tm/products/${id}/labor?quantity=${q}`),
+                apiRequest(`/tm/products/${id}/labor-stages?quantity=${q}&own=${tmState.ownOnly}`)]);
             out.innerHTML = `<div class="tm-sub-title mb-1"><i class="fas fa-users-gear"></i> Трудовые ресурсы по профессиям и квалификации</div>
                 <div class="table-responsive"><table class="data-table bom-calc-table"><thead><tr><th>Профессия</th><th>Квалификация</th><th class="text-end">Операций</th><th class="text-end">Трудоёмкость, нормо-ч</th><th class="text-end">Ставка, руб/ч</th><th class="text-end">Оплата труда, руб.</th></tr></thead><tbody>
                 ${r.items.map(i => `<tr><td>${escapeHtml(i.профессия)}</td><td>${escapeHtml(i.квалификация)}</td><td class="text-end">${i.операций}</td><td class="text-end fw-bold">${bomNum(i.трудоемкость_ч, 2)}</td><td class="text-end">${tmMoney(i.ставка)}</td><td class="text-end">${tmMoney(i.стоимость)}</td></tr>`).join('')}
@@ -359,6 +362,7 @@ async function tmRunCalc() {
                 <div class="table-responsive"><table class="data-table bom-calc-table"><thead><tr><th>ГРЦ</th><th class="text-end">Операций</th><th class="text-end">Машино-часы</th><th class="text-end">Смен (8 ч × ед. обор.)</th><th class="text-end">Ставка, руб/маш-ч</th><th class="text-end">Затраты, руб.</th></tr></thead><tbody>
                 ${r.грц.map(g => `<tr><td>${escapeHtml(g.грц)}</td><td class="text-end">${g.операций}</td><td class="text-end fw-bold">${bomNum(g.машино_часы, 2)}</td><td class="text-end">${g.фонд_ч_в_смену ? bomNum(g.машино_часы / g.фонд_ч_в_смену, 2) : '—'}</td><td class="text-end">${tmMoney(g.ставка)}</td><td class="text-end">${tmMoney(g.стоимость)}</td></tr>`).join('')}
                 </tbody></table></div>`;
+            out.insertAdjacentHTML('beforeend', tmStagesHtml(st));
         } else {
             const r = await apiRequest(`/tm/products/${id}/cost?quantity=${q}`);
             const total = r.items.find(i => i.статья.startsWith('Итого'))?.сумма || 0;
@@ -383,7 +387,7 @@ function tmShowOperationModal(productId, kind, op = null) {
     const title = buy ? (edit ? 'Позиция закупки' : 'Новая позиция закупки') : (edit ? `Операция ${tmOpNo(op.номер)}` : 'Новая операция тех-маршрута');
     let body;
     if (buy) {
-        body = `<div class="alert alert-light border small"><i class="fas fa-info-circle text-primary"></i> Позиция закупки — подкласс Изделия-Операции: изделие поступает готовым, у него нет входных ресурсов и норм времени.</div>
+        body = `<div class="alert alert-light border small"><i class="fas fa-info-circle text-primary"></i> Изделие закупается готовым: у позиции закупки нет входных ресурсов и норм времени, указывается только цена.</div>
         <div class="row g-3">
             <div class="col-md-6 form-field"><label class="form-label" for="tmPrice">Цена закупки, руб. *</label><input type="number" class="form-control" id="tmPrice" min="0" step="any" value="${op?.цена ?? ''}"></div>
             <div class="col-md-6 form-field"><label class="form-label" for="tmUnit">За единицу</label><select class="form-select" id="tmUnit">${bomUnitOptions(op?.ед_изм_id)}</select></div>
@@ -529,7 +533,7 @@ async function tmDeleteToolLink(id) {
 
 async function tmShowApplyTypicalModal(opId, currentTp) {
     const body = `<div class="alert alert-light border small"><i class="fas fa-feather text-info"></i>
-            Типовой ТП хранится в единственном экземпляре (паттерн «Приспособленец»); операция хранит только ссылку на него и значения параметров.</div>
+            Нормы времени и расхода будут рассчитаны по формулам типового ТП для заданных значений параметров.</div>
         <div class="form-field mb-3"><label class="form-label" for="tmTp">Типовой ТП *</label><select class="form-select" id="tmTp">${tmOptions(tmState.refs.typical, currentTp, '— выберите —')}</select></div>
         <div id="tmTpParams"></div><div id="tmTpPreview"></div>`;
     const m = bomModal('Применение типового ТП', body, `<button class="btn btn-primary" onclick="tmApplyTypical(this, ${opId})"><i class="fas fa-check"></i> Применить</button>`);
@@ -627,20 +631,12 @@ async function loadTmTypical() {
     showLoading();
     try {
         await tmLoadRefs(true);
-        const [list, stats] = await Promise.all([apiRequest('/tm/typical'), apiRequest('/tm/typical/stats')]);
+        const list = await apiRequest('/tm/typical');
         if (!tmState.typicalId || !list.some(t => t.id === tmState.typicalId)) tmState.typicalId = list[0]?.id || null;
         document.getElementById('content').innerHTML = `
         <div class="page-header">
             <h1><i class="fas fa-feather"></i> Типовые технологические процессы</h1>
-            <p class="subtitle">Паттерн «Приспособленец»: нормы типового ТП (внутреннее состояние) хранятся один раз и разделяются всеми операциями; у операции хранятся только значения параметров (внешнее состояние)</p>
-        </div>
-        <div class="tm-stats">
-            <div class="tm-stat"><span>${stats.типовых_тп}</span>типовых ТП</div>
-            <div class="tm-stat"><span>${stats.применений}</span>операций используют ТТП</div>
-            <div class="tm-stat"><span>${stats.строк_норм_хранится}</span>строк норм хранится</div>
-            <div class="tm-stat tm-stat-muted"><span>${stats.строк_без_приспособленца}</span>строк было бы без «Приспособленца»</div>
-            <div class="tm-stat"><span>${stats.значений_параметров}</span>значений параметров</div>
-            <div class="tm-stat"><span>${stats.объектов_в_пуле}</span>объектов в пуле фабрики</div>
+            <p class="subtitle">Шаблоны технологических процессов: нормы времени и расхода задаются формулами от параметра (например, массы детали) и применяются к операциям разных изделий</p>
         </div>
         <div class="row g-3">
             <div class="col-xxl-3 col-lg-4"><div class="card-panel">
@@ -684,8 +680,8 @@ async function tmRenderTypical(id) {
             <table class="data-table tm-mini mb-3"><thead><tr><th>Материал</th><th>Норма</th><th>ЕИ</th>${TM_READONLY ? '' : '<th></th>'}</tr></thead><tbody>
             ${t.resources.map(r => `<tr><td>${escapeHtml(r.изделие)} <span class="bom-sku">${escapeHtml(r.артикул || '')}</span></td><td>${formula(r.норма_база, r.норма_коэф, r.параметр)}</td><td>${escapeHtml(r.ед_изм || '—')}</td>${del('resource', r.id)}</tr>`).join('') || '<tr><td colspan="4" class="text-muted">нет</td></tr>'}
             </tbody></table>
-            <div class="tm-sub-title"><i class="fas fa-link"></i> Применение: операции, разделяющие этот типовой ТП (${t.uses.length})</div>
-            <div class="table-responsive"><table class="data-table tm-mini"><thead><tr><th>Изделие</th><th>Операция</th><th>Значения параметров (внешнее состояние)</th></tr></thead><tbody>
+            <div class="tm-sub-title"><i class="fas fa-link"></i> Операции, использующие этот типовой ТП (${t.uses.length})</div>
+            <div class="table-responsive"><table class="data-table tm-mini"><thead><tr><th>Изделие</th><th>Операция</th><th>Значения параметров</th></tr></thead><tbody>
             ${t.uses.map(u => `<tr><td><a href="#" onclick="event.preventDefault(); tmOpenProduct(${u.изделие_id})">${escapeHtml(u.изделие)}</a> <span class="bom-sku">${escapeHtml(u.артикул || '')}</span></td><td>${tmOpNo(u.номер)} ${escapeHtml(u.операция)}</td>
                 <td>${Object.entries(u.значения).map(([k, v]) => `<span class="tm-param">${escapeHtml(k)} = <b>${bomNum(v)}</b></span>`).join('')}</td></tr>`).join('') || '<tr><td colspan="3" class="text-muted">Типовой ТП пока не применён</td></tr>'}
             </tbody></table></div>
@@ -799,6 +795,123 @@ async function tmSaveTypicalRes(btn, tpId) {
     } catch (e) { showToast(e.message, 'error'); }
 }
 
+/* ----- Расчёт строки маршрута на q: MR_Q, Трудоёмкость(q), Стоимость(q) ----- */
+function tmShowOpCalc(opId) {
+    const body = `<div class="row g-2 align-items-end mb-3">
+        <div class="col-md-5 form-field"><label class="form-label" for="ocQty">Количество результата операции, шт. *</label>
+            <input type="number" class="form-control" id="ocQty" min="1" step="1" value="${tmState.qty}"></div>
+        <div class="col-md-3"><button class="btn btn-primary w-100" onclick="tmRunOpCalc(${opId})"><i class="fas fa-calculator"></i> Рассчитать</button></div></div>
+        <div id="ocResult"></div>`;
+    bomModal('Расчёт операции на заданное количество', body, '', 'modal-xl');
+    setTimeout(() => tmRunOpCalc(opId), 300);
+}
+
+async function tmRunOpCalc(opId) {
+    const q = bomPositiveNumber('ocQty', 'Количество');
+    if (q == null) return;
+    const out = document.getElementById('ocResult');
+    try {
+        const r = await apiRequest(`/tm/operations/${opId}/calc?quantity=${q}`);
+        let html = `<div class="fw-semibold mb-2">${escapeHtml(r.операция)} — на ${bomNum(q)} шт.</div>`;
+        if (r.вид === 'ЗАКУПКА') {
+            html += `<div class="tm-stats mb-2"><div class="tm-stat"><span>${tmMoney(r.стоимость)}</span>Стоимость(q), руб. = цена ${tmMoney(r.цена)} × ${bomNum(q)}</div></div>`;
+        } else {
+            html += `<div class="tm-sub-title mb-1"><i class="fas fa-clock"></i> Трудоёмкость(q) = (Тпз + Тшт × q) / 60</div>
+                <div class="table-responsive"><table class="data-table bom-calc-table"><thead><tr><th>Этап</th><th>ГРЦ</th><th>Профессия, разряд</th><th class="text-end">Тпз, мин</th><th class="text-end">Тшт, мин</th><th class="text-end">Нормо-ч (= машино-ч)</th><th class="text-end">Оплата, руб.</th><th class="text-end">Оборудование, руб.</th></tr></thead><tbody>
+                ${r.этапы.map(e => `<tr><td>${escapeHtml(e.этап || 'операция целиком')}</td><td>${escapeHtml(e.грц || '—')}</td><td>${escapeHtml(e.профессия)}, ${escapeHtml(e.квалификация)}</td>
+                    <td class="text-end">${bomNum(e.тпз, 3)}</td><td class="text-end">${bomNum(e.тшт, 5)}</td><td class="text-end fw-bold">${bomNum(e.часы, 3)}</td>
+                    <td class="text-end">${tmMoney(e.оплата)}</td><td class="text-end">${tmMoney(e.затраты_оборудования)}</td></tr>`).join('')}
+                </tbody><tfoot><tr><td colspan="5" class="text-end fw-bold">Итого:</td><td class="text-end fw-bold">${bomNum(r.часы, 3)}</td><td class="text-end fw-bold">${tmMoney(r.оплата)}</td><td class="text-end fw-bold">${tmMoney(r.затраты_оборудования)}</td></tr></tfoot></table></div>`;
+        }
+        html += `<div class="tm-sub-title mt-3 mb-1"><i class="fas fa-right-to-bracket"></i> Требуемые ресурсы(q) — MR_Q</div>
+            ${r.ресурсы.length ? `<div class="table-responsive"><table class="data-table bom-calc-table"><thead><tr><th>Входной ресурс</th><th class="text-end">Норма</th><th class="text-end">Для кол-ва</th><th class="text-end">Требуется на q</th><th>ЕИ</th><th>Источник</th></tr></thead><tbody>
+            ${r.ресурсы.map(i => `<tr><td>${escapeHtml(i.изделие)} <span class="bom-sku">${escapeHtml(i.артикул || '')}</span></td><td class="text-end">${bomNum(i.норма)}</td><td class="text-end">${bomNum(i.для_количества)}</td>
+                <td class="text-end fw-bold">${bomNum(i.количество, 4)}</td><td>${escapeHtml(i.ед_изм || '—')}</td><td>${tmSourceBadge(i.источник)}</td></tr>`).join('')}
+            </tbody></table></div>` : '<div class="text-muted small">У этой строки маршрута нет входных ресурсов</div>'}`;
+        out.innerHTML = html;
+    } catch (e) { out.innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`; }
+}
+
+/* ----- Трудоёмкость(q) по этапам маршрута ----- */
+function tmStageRows(items, showProduct = true) {
+    return items.map(i => `<tr>
+        <td>${showProduct ? `<a href="#" onclick="event.preventDefault(); document.querySelectorAll('.modal.show').forEach(m => bootstrap.Modal.getInstance(m)?.hide()); tmOpenProduct(${i.изделие_id})">${escapeHtml(i.изделие)}</a> → ` : ''}${tmOpNo(i.номер)} ${escapeHtml(i.операция)}
+            ${i.типовая_операция ? `<div class="small text-muted">этап типового ТП: ${escapeHtml(i.типовая_операция)}</div>` : ''}</td>
+        <td>${escapeHtml(i.грц || '—')}</td><td>${escapeHtml(i.профессия)}, ${escapeHtml(i.квалификация)}</td>
+        <td class="text-end">${bomNum(i.тпз, 3)}</td><td class="text-end">${bomNum(i.тшт, 5)}</td><td class="text-end">${bomNum(i.количество, 4)}</td>
+        <td class="text-end fw-bold">${bomNum(i.часы, 3)}</td><td class="text-end">${i.грц ? bomNum(i.машино_часы, 3) : '—'}</td>
+        <td class="text-end">${tmMoney(i.оплата)}</td><td class="text-end">${tmMoney(i.затраты_оборудования)}</td></tr>`).join('');
+}
+
+function tmStagesHtml(st) {
+    return `<div class="tm-sub-title mt-3 mb-1 d-flex flex-wrap align-items-center gap-3"><span><i class="fas fa-list-ol"></i> Трудоёмкость по этапам маршрута на ${bomNum(st.количество)} шт.</span>
+        <label class="form-check-label small fw-normal"><input type="checkbox" class="form-check-input me-1" ${st.только_изделие ? 'checked' : ''}
+            onchange="tmState.ownOnly = this.checked; tmRunCalc()"> только операции этого изделия (без компонентов)</label></div>
+        <div class="small text-muted mb-1">Трудоёмкость, нормо-ч = (Тпз + Тшт × кол-во на 1 изд. × количество) / 60. Машино-часы — то же время, занимаемое на оборудовании ГРЦ.</div>
+        ${st.items.length ? `<div class="table-responsive"><table class="data-table bom-calc-table"><thead><tr><th>Изделие → операция</th><th>ГРЦ</th><th>Профессия, разряд</th><th class="text-end">Тпз, мин</th><th class="text-end">Тшт, мин</th><th class="text-end">Кол-во на 1 изд.</th><th class="text-end">Нормо-ч</th><th class="text-end">Машино-ч</th><th class="text-end">Оплата, руб.</th><th class="text-end">Оборудование, руб.</th></tr></thead><tbody>
+        ${tmStageRows(st.items)}
+        </tbody><tfoot><tr><td colspan="6" class="text-end fw-bold">Итого:</td><td class="text-end fw-bold">${bomNum(st.итого_ч, 2)}</td><td class="text-end fw-bold">${bomNum(st.итого_маш_ч, 2)}</td><td class="text-end fw-bold">${tmMoney(st.итого_оплата)}</td><td class="text-end fw-bold">${tmMoney(st.итого_оборудование)}</td></tr></tfoot></table></div>`
+        : '<div class="empty-state py-3"><p>Нет операций тех-маршрута</p></div>'}`;
+}
+
+/* ----- Загрузка(q) ГРЦ ----- */
+async function tmShowWorkCenterLoad(wcId, title) {
+    const products = await apiRequest('/tm/products');
+    const withRoute = products.filter(p => p.операций && !p.закупка);
+    const kinds = Object.keys(BOM_KIND_TITLES);
+    const options = kinds.map(k => {
+        const g = withRoute.filter(p => p.тип_изделия === k);
+        return g.length ? `<optgroup label="${BOM_KIND_TITLES[k]}">${g.map(p => `<option value="${p.id}" ${p.id === tmState.selectedId ? 'selected' : ''}>${escapeHtml(p.наименование)} (${escapeHtml(p.артикул || '—')})</option>`).join('')}</optgroup>` : '';
+    }).join('');
+    const body = `<div class="row g-2 align-items-end mb-3">
+        <div class="col-md-6 form-field"><label class="form-label" for="wlProd">Изделие *</label><select class="form-select" id="wlProd">${options}</select></div>
+        <div class="col-md-3 form-field"><label class="form-label" for="wlQty">Количество, шт. *</label><input type="number" class="form-control" id="wlQty" min="1" step="1" value="${tmState.qty}"></div>
+        <div class="col-md-3"><button class="btn btn-primary w-100" onclick="tmRunWorkCenterLoad(${wcId})"><i class="fas fa-calculator"></i> Рассчитать</button></div></div>
+        <div id="wlResult"></div>`;
+    bomModal(`Загрузка ГРЦ ${title}`, body, '', 'modal-xl');
+    setTimeout(() => tmRunWorkCenterLoad(wcId), 300);
+}
+
+async function tmRunWorkCenterLoad(wcId) {
+    const q = bomPositiveNumber('wlQty', 'Количество');
+    if (q == null) return;
+    const pid = document.getElementById('wlProd').value;
+    const out = document.getElementById('wlResult');
+    if (!pid) { out.innerHTML = '<div class="text-muted">Выберите изделие</div>'; return; }
+    try {
+        const r = await apiRequest(`/tm/work-centers/${wcId}/load?product_id=${pid}&quantity=${q}`);
+        out.innerHTML = `<div class="tm-stats mb-3">
+                <div class="tm-stat"><span>${bomNum(r.машино_часы, 2)}</span>машино-часов</div>
+                <div class="tm-stat"><span>${r.смен != null ? bomNum(r.смен, 2) : '—'}</span>смен (8 ч × ${r.количество_ед} ед. оборудования)</div>
+                <div class="tm-stat"><span>${tmMoney(r.затраты)}</span>затраты, руб. (ставка ${tmMoney(r.ставка)} руб/маш-ч)</div>
+                <div class="tm-stat"><span>${r.items.length}</span>этапов маршрута на этом ГРЦ</div></div>
+            ${r.items.length ? `<div class="table-responsive"><table class="data-table bom-calc-table"><thead><tr><th>Изделие → операция</th><th>ГРЦ</th><th>Профессия, разряд</th><th class="text-end">Тпз, мин</th><th class="text-end">Тшт, мин</th><th class="text-end">Кол-во на 1 изд.</th><th class="text-end">Нормо-ч</th><th class="text-end">Машино-ч</th><th class="text-end">Оплата, руб.</th><th class="text-end">Оборудование, руб.</th></tr></thead><tbody>${tmStageRows(r.items)}</tbody></table></div>`
+            : `<div class="empty-state py-3"><p>Изделие «${escapeHtml(r.изделие)}» не использует этот ГРЦ</p></div>`}`;
+    } catch (e) { out.innerHTML = `<div class="alert alert-danger">${escapeHtml(e.message)}</div>`; }
+}
+
+/* ================================== Профессии и квалификации ================================== */
+async function loadTmWorkforce() {
+    showLoading();
+    try {
+        const r = await apiRequest('/tm/workforce');
+        document.getElementById('content').innerHTML = `
+        <div class="page-header"><h1><i class="fas fa-user-gear"></i> Профессии и квалификации</h1>
+            <p class="subtitle">Квалификация (разряд) задаёт тарифную ставку для расчёта оплаты труда; профессии берутся из классификатора</p></div>
+        <div class="row g-3">
+            <div class="col-lg-6"><div class="card-panel"><div class="card-panel-header"><span><i class="fas fa-award"></i> Квалификации (разряды): ${r.qualifications.length}</span></div>
+                <div class="card-panel-body"><table class="data-table"><thead><tr><th>Квалификация</th><th class="text-end">Ставка, руб/ч</th><th class="text-end">Требуется в операциях</th></tr></thead><tbody>
+                ${r.qualifications.map(q => `<tr><td>${escapeHtml(q.name)}</td><td class="text-end">${tmMoney(q.ставка)}</td><td class="text-end">${q.операций || '<span class="text-muted">не используется</span>'}</td></tr>`).join('')}
+                </tbody></table></div></div></div>
+            <div class="col-lg-6"><div class="card-panel"><div class="card-panel-header"><span><i class="fas fa-user-tie"></i> Профессии: ${r.professions.length}</span></div>
+                <div class="card-panel-body"><table class="data-table"><thead><tr><th>Профессия</th><th class="text-end">Требуется в операциях</th></tr></thead><tbody>
+                ${r.professions.map(p => `<tr><td>${escapeHtml(p.name)}</td><td class="text-end">${p.операций || '<span class="text-muted">не используется</span>'}</td></tr>`).join('')}
+                </tbody></table></div></div></div>
+        </div>
+        <div class="small text-muted mt-2">«Требуется в операциях» — число операций маршрутов и типовых операций, для которых указана эта профессия или квалификация. Ставки разрядов ведутся в разделе «Значения» перечисления «Квалификация (разряд)», профессии — в «Дереве» классификатора.</div>`;
+    } catch (e) { showError(e.message); }
+}
+
 /* ================================== ГРЦ ================================== */
 async function loadTmWorkCenters() {
     showLoading();
@@ -810,9 +923,10 @@ async function loadTmWorkCenters() {
             <p class="subtitle">Группы однотипного оборудования, на которых выполняются технологические операции; ставка машино-часа используется в калькуляции</p></div>
         <div class="card-panel"><div class="card-panel-header"><span><i class="fas fa-list"></i> ГРЦ: ${list.length}</span>
             ${TM_READONLY ? '' : `<button class="btn btn-sm btn-success" onclick="tmShowWorkCenterModal()"><i class="fas fa-plus"></i> Добавить ГРЦ</button>`}</div>
-        <div class="card-panel-body"><div class="table-responsive"><table class="data-table"><thead><tr><th>Код</th><th>Наименование</th><th>Тип оборудования</th><th>Подразделение</th><th class="text-end">Ед. оборудования</th><th class="text-end">Ставка, руб/маш-ч</th><th class="text-end">Операций</th>${TM_READONLY ? '' : '<th>Действия</th>'}</tr></thead><tbody>
+        <div class="card-panel-body"><div class="table-responsive"><table class="data-table"><thead><tr><th>Код</th><th>Наименование</th><th>Тип оборудования</th><th>Подразделение</th><th class="text-end">Ед. оборудования</th><th class="text-end">Ставка, руб/маш-ч</th><th>Загрузка(q)</th>${TM_READONLY ? '' : '<th>Действия</th>'}</tr></thead><tbody>
         ${list.map(g => `<tr><td class="fw-semibold">${escapeHtml(g.код)}</td><td>${escapeHtml(g.наименование)}</td><td>${escapeHtml(g.класс || '—')}</td><td>${escapeHtml(g.подразделение || '—')}</td>
-            <td class="text-end">${g.количество_ед}</td><td class="text-end">${tmMoney(g.ставка_часа)}</td><td class="text-end">${g.операций}</td>
+            <td class="text-end">${g.количество_ед}</td><td class="text-end">${tmMoney(g.ставка_часа)}</td>
+            <td><button class="btn btn-sm btn-outline-primary text-nowrap" onclick="tmShowWorkCenterLoad(${g.id}, '${tmQuote(g.код)}')"><i class="fas fa-gauge-high"></i> Загрузка</button></td>
             ${TM_READONLY ? '' : `<td class="actions"><button class="btn btn-sm btn-outline-primary" onclick='tmShowWorkCenterModal(${JSON.stringify(g).replace(/'/g, "&#39;")})'><i class="fas fa-edit"></i></button>
                 <button class="btn btn-sm btn-outline-danger" onclick="tmDeleteWorkCenter(${g.id}, '${tmQuote(g.код)}')"><i class="fas fa-trash"></i></button></td>`}</tr>`).join('')}
         </tbody></table></div></div></div>`;
