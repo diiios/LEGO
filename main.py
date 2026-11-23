@@ -467,27 +467,21 @@ def create_part_type(data: PartTypeCreate, db: Session = Depends(get_db)):
 
 # ==================== UTILITIES ====================
 
-def development_only():
-    """Служебные операции, стирающие данные, недоступны на сервере (ENV=production)"""
-    if config.is_production:
-        raise HTTPException(status_code=403, detail="Операция отключена на сервере: она стирает данные базы")
-
-
-@app.post("/test-data", tags=["Сервисные"], dependencies=[Depends(development_only)])
+@app.post("/test-data", tags=["Сервисные"])
 def load_test_data(db: Session = Depends(get_db)):
     """Загрузить тестовые данные"""
     result = classifier.load_test_data(db)
     return result
 
-@app.delete("/clear", tags=["Сервисные"], dependencies=[Depends(development_only)])
+@app.delete("/clear", tags=["Сервисные"])
 def clear_database(db: Session = Depends(get_db)):
     """Очистить базу данных"""
     classifier.clear_database(db)
     return {"success": True, "message": "База данных очищена"}
 
-@app.post("/reset-database", tags=["Сервисные"], dependencies=[Depends(development_only)])
+@app.post("/reset-database", tags=["Сервисные"])
 def reset_database():
-    """Полностью пересоздаёт базу данных (только для разработки!)"""
+    """Полностью пересоздаёт базу данных"""
     import psycopg2
     from config import config
     
