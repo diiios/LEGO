@@ -903,9 +903,25 @@ class ConfigService:
                 "значения": {str(k): x for k, x in vals.items()}, "параметры": shown}
 
     # ------------------------------------------------------------ библиотека функций
+    def _function_call_counts(self, db: Session) -> Dict[int, int]:
+        return dict(db.execute(text("""
+            WITH RECURSIVE bodies(function_id, call_id) AS (
+                SELECT id, "тело_вызов_id" FROM "функция_ограничения" WHERE "тело_вызов_id" IS NOT NULL
+                UNION
+                SELECT b.function_id, p."вложенный_вызов_id"
+                FROM bodies b JOIN "фактический_параметр" p ON p."вызов_id" = b.call_id
+                WHERE p."вложенный_вызов_id" IS NOT NULL
+            )
+            SELECT c."функция_id", count(*)
+            FROM "вызов_функции" c
+            LEFT JOIN bodies b ON b.function_id = c."функция_id" AND b.call_id = c.id
+            WHERE b.call_id IS NULL
+            GROUP BY c."функция_id"
+        """)).all())
+
     def functions(self, db: Session) -> List[Dict[str, Any]]:
         lib = Library(db)
-        used = dict(db.execute(text("""SELECT "функция_id", count(*) FROM "вызов_функции" GROUP BY 1""")).all())
+        used = self._function_call_counts(db)
         out = []
         for f in sorted(lib.funcs.values(), key=lambda x: (x["класс"] or "", x["обозначение"])):
             body = self._expr_json(db, f["тело_вызов_id"], lib)
@@ -1028,8 +1044,8 @@ class ConfigService:
             raise ConfigError("Функция не найдена")
         if not f.тело_вызов_id:
             raise ConfigError("Встроенную функцию (с оператором) удалить нельзя")
-        if db.query(FunctionCall).filter(FunctionCall.функция_id == fid).count():
-            raise ConfigError("Функция используется в ограничениях — сначала удалите их")
+        if self._function_call_counts(db).get(fid, 0):
+            raise ConfigError("Функция используется в ограничении, формуле цены или теле другой функции")
         body = f.тело_вызов_id
         f.тело_вызов_id = None
         db.flush()
